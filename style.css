@@ -148,3 +148,11 @@ nav .install-app{white-space:nowrap}
 
 /* Até duas especialidades no cadastro e no perfil profissional */
 .specialty-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0}.specialty-grid label{margin:0}.specialty-hint{grid-column:1/-1;font-size:.8rem}
+
+
+/* Imagens de serviços mais proporcionais em tablet e desktop; celular permanece inalterado. */
+@media (min-width: 641px) {
+  .service-gallery { align-items: flex-start; }
+  .service-gallery > .box { flex: 0 1 520px; max-width: 520px; }
+  .service-gallery .main-img { max-height: 360px; }
+}
