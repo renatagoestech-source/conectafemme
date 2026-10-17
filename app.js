@@ -125,8 +125,10 @@ function bindSecondarySpecialty(primarySelector, secondarySelector, categories, 
   const primary = $(primarySelector), secondary = $(secondarySelector);
   if (!primary || !secondary) return;
   const update = (preferred = secondary.value) => {
-    const available = categories.filter((category) => category !== primary.value);
-    secondary.innerHTML = specialtyOptions(available, available.includes(preferred) ? preferred : '', 'Não tenho outra especialidade');
+    const hasPrimary = Boolean(primary.value);
+    const available = hasPrimary ? categories.filter((category) => category !== primary.value) : [];
+    secondary.disabled = !hasPrimary;
+    secondary.innerHTML = specialtyOptions(available, available.includes(preferred) ? preferred : '', hasPrimary ? 'Não tenho outra especialidade' : 'Selecione primeiro a principal');
   };
   primary.addEventListener('change', () => update(secondary.value));
   update(selected);
@@ -335,7 +337,9 @@ function authForm(register) {
       Object.assign(body, { role, name: $('#name').value, whatsapp: $('#wa').value });
       if (role === 'provider') {
         await categoriesReady;
-        const specialties = [$('#cat1').value, $('#cat2').value].filter(Boolean);
+        const primary = $('#cat1').value;
+        if (!primary) return alert('Selecione uma especialidade principal.');
+        const specialties = [primary, $('#cat2').value].filter(Boolean);
         Object.assign(body, { category: specialties[0] || '', specialties, state: $('#state').value, city: $('#city').value });
       }
     }
@@ -460,8 +464,9 @@ async function painel(tab = 'ag') {
   if (tab === 'perfil') bindSecondarySpecialty('#c1', '#c2', categories, selectedSpecialties[1] || '');
   on('#copy-link', () => copyPublicLink(U.id));
   on('#sp', async () => {
-    const specialties = [$('#c1').value, $('#c2').value].filter(Boolean);
-    if (!specialties.length) return alert('Selecione uma especialidade principal.');
+    const primary = $('#c1').value;
+    if (!primary) return alert('Selecione uma especialidade principal.');
+    const specialties = [primary, $('#c2').value].filter(Boolean);
     const selectedFile = $('#logo-file').files[0];
     let logo = me.logo || '';
     if (selectedFile) logo = (await uploadSelected(selectedFile, 'profile')).url;
