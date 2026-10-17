@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS public.categories (
 CREATE TABLE IF NOT EXISTS public.providers (
   user_id bigint PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
   category varchar(80),
+  specialties text[] NOT NULL DEFAULT '{}'::text[] CHECK (cardinality(specialties) <= 2),
   bio text NOT NULL DEFAULT '',
   logo varchar(500) NOT NULL DEFAULT '',
   state varchar(2) NOT NULL DEFAULT '',

@@ -144,3 +144,7 @@ input, select, textarea { min-height: 42px; border-radius: 11px; }
 .site-footer p{margin:0 0 8px}.footer-contact-links{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px 20px}.footer-contact-links a{color:var(--p);text-decoration:none}.footer-contact-links a:hover{text-decoration:underline}.footer-contact-links .footer-instagram{display:inline-flex;align-items:center;gap:6px;font-weight:700}.footer-contact-links .footer-about-link{margin-left:0}
 
 nav .install-app{white-space:nowrap}
+
+
+/* Até duas especialidades no cadastro e no perfil profissional */
+.specialty-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0}.specialty-grid label{margin:0}.specialty-hint{grid-column:1/-1;font-size:.8rem}

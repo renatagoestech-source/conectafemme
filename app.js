@@ -113,6 +113,24 @@ let T = localStorage.t || '';
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 }[char]));
+const specialtyList = (record) => {
+  const saved = Array.isArray(record?.specialties) ? record.specialties : [];
+  const values = saved.length ? saved : [record?.category];
+  return [...new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean))].slice(0, 2);
+};
+const specialtyTags = (record) => specialtyList(record).map((value) => `<span class="tag">${esc(value)}</span>`).join(' ');
+const specialtyOptions = (categories, selected = '', placeholder = 'Selecione uma especialidade') =>
+  `<option value="">${esc(placeholder)}</option>${categories.map((category) => `<option value="${esc(category)}" ${category === selected ? 'selected' : ''}>${esc(category)}</option>`).join('')}`;
+function bindSecondarySpecialty(primarySelector, secondarySelector, categories, selected = '') {
+  const primary = $(primarySelector), secondary = $(secondarySelector);
+  if (!primary || !secondary) return;
+  const update = (preferred = secondary.value) => {
+    const available = categories.filter((category) => category !== primary.value);
+    secondary.innerHTML = specialtyOptions(available, available.includes(preferred) ? preferred : '', 'Não tenho outra especialidade');
+  };
+  primary.addEventListener('change', () => update(secondary.value));
+  update(selected);
+}
 const brl = (value) => Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const wa = (number, message) => `https://wa.me/55${String(number).replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
 const imgs = (value) => { try { return Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch { return []; } };
@@ -133,7 +151,7 @@ function publicProfileUrl(id) {
 }
 
 async function api(action, body, query = '', quiet = false) {
-  const response = await fetch(`${window.SUPABASE_URL}/functions/v1/conectaelas-api?a=${action}${query}`, {
+  const response = await fetch(`${window.SUPABASE_URL}/functions/v1/conectaelas-api-enhanced?a=${action}${query}`, {
     method: body ? 'POST' : 'GET',
     headers: { 'Content-Type': 'application/json', 'X-Token': T, apikey: window.SUPABASE_PUBLISHABLE_KEY },
     body: body ? JSON.stringify(body) : undefined,
@@ -230,7 +248,7 @@ async function home() {
     $('#results-count').textContent = `${providers.length} profissional${providers.length === 1 ? '' : 'is'} encontrado${providers.length === 1 ? '' : 's'}`;
     $('#list').innerHTML = providers.length ? providers.map((professional) => { const cover = imgs(professional.img)[0] || professional.logo || 'assets/conectafemme-logo.png'; return `<a class="card" href="#/p/${professional.id}">
       <div class="img" ${bg(cover)}><div class="logo" ${bg(professional.logo || cover)}></div></div>
-      <div class="info"><b>${esc(professional.name)}</b> ${professional.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}${professional.is_founder ? '<span class="founder-badge compact">✦ Fundador</span>' : ''}<br><span class="tag">${esc(professional.category || '')}</span><div class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</div>${ratingSummary(professional.rating_avg, professional.review_count)}
+      <div class="info"><b>${esc(professional.name)}</b> ${professional.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}${professional.is_founder ? '<span class="founder-badge compact">✦ Fundador</span>' : ''}<br>${specialtyTags(professional)}<div class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</div>${ratingSummary(professional.rating_avg, professional.review_count)}
       ${professional.min_price != null ? `<div>a partir de <span class="price">${brl(professional.min_price)}</span></div>` : '<div class="muted">Consulte os serviços</div>'}<span class="card-link btn sm">Ver perfil <span aria-hidden="true">→</span></span></div></a>`; }).join('') : '<p class="muted">Nenhum profissional encontrado. Tente ampliar o preço máximo ou alterar a categoria.</p>';
   };
   $('#go').onclick = load;
@@ -257,7 +275,7 @@ async function provider(id) {
   const instagram = professional.instagram_url
     ? `<a class="btn out sm" href="${esc(professional.instagram_url)}" target="_blank" rel="noopener noreferrer">Instagram</a>`
     : '';
-  app.innerHTML = `<div class="profile-head"><div class="lg" ${bg(professional.logo)}></div><div><h2 style="margin:0">${esc(professional.name)}</h2><span class="tag">${esc(professional.category || '')}</span> ${professional.is_demo ? '<span class="tag demo-tag">Perfil demonstrativo</span>' : ''} ${professional.is_founder ? '<span class="founder-badge compact">✦ Profissional Fundador</span>' : ''} <span class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</span><div class="profile-rating">${ratingSummary(professional.rating_avg, professional.review_count)}</div><p>${esc(professional.bio || '')}</p>
+  app.innerHTML = `<div class="profile-head"><div class="lg" ${bg(professional.logo)}></div><div><h2 style="margin:0">${esc(professional.name)}</h2>${specialtyTags(professional)} ${professional.is_demo ? '<span class="tag demo-tag">Perfil demonstrativo</span>' : ''} ${professional.is_founder ? '<span class="founder-badge compact">✦ Profissional Fundador</span>' : ''} <span class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</span><div class="profile-rating">${ratingSummary(professional.rating_avg, professional.review_count)}</div><p>${esc(professional.bio || '')}</p>
     ${professional.is_demo ? '<p class="muted">Este perfil fictício é apenas para demonstração; o contato não está ativo.</p>' : `<div class="profile-actions"><a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(professional.whatsapp, `Olá ${professional.name}! Vi seu perfil no ConectaFemme.`)}">WhatsApp</a>${instagram}</div>`}</div></div>
     <h3>Serviços</h3><div class="row">${professional.services.map((service) => {
       const images = imgs(service.images);
@@ -294,17 +312,33 @@ async function provider(id) {
 }
 
 function authForm(register) {
+  let categoriesReady = Promise.resolve([]);
   app.innerHTML = `<div class="box auth"><h2>${register ? 'Criar conta' : 'Entrar'}</h2>
-    ${register ? `<label>Sou</label><select id="role"><option value="client">Cliente</option><option value="provider">Profissional / Estabelecimento</option></select><label>Nome</label><input id="name"><label>WhatsApp (com DDD)</label><input id="wa"><div id="pf" hidden><label>Especialidade</label><select id="cat"></select><div class="provider-location-grid"><label>Estado<select id="state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="city" autocomplete="address-level2"></label></div></div>` : ''}
+    ${register ? `<label>Sou</label><select id="role"><option value="client">Cliente</option><option value="provider">Profissional / Estabelecimento</option></select><label>Nome</label><input id="name"><label>WhatsApp (com DDD)</label><input id="wa"><div id="pf" hidden><div class="specialty-grid"><label>Especialidade principal<select id="cat1" required></select></label><label>Segunda especialidade (opcional)<select id="cat2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="city" autocomplete="address-level2"></label></div></div>` : ''}
     <label>E-mail</label><input id="email" type="email"><label>Senha</label><input id="pw" type="password"><br><br><button class="btn" id="ok" style="width:100%">${register ? 'Cadastrar' : 'Entrar'}</button>
     <p class="muted">${register ? 'Já tem conta? <a href="#/login">Entrar</a>' : 'Novo aqui? <a href="#/cadastro">Cadastre-se</a>'}</p></div>`;
   if (register) {
-    api('cats').then((categories) => $('#cat').innerHTML = categories.map((category) => `<option>${esc(category)}</option>`).join(''));
+    categoriesReady = api('cats').then((categories) => {
+      $('#cat1').innerHTML = specialtyOptions(categories);
+      bindSecondarySpecialty('#cat1', '#cat2', categories);
+      return categories;
+    }).catch((error) => {
+      console.error('Não foi possível carregar as especialidades:', error);
+      return [];
+    });
     $('#role').onchange = (event) => $('#pf').hidden = event.target.value !== 'provider';
   }
   $('#ok').onclick = async () => {
     const body = { email: $('#email').value, password: $('#pw').value };
-    if (register) Object.assign(body, { role: $('#role').value, name: $('#name').value, whatsapp: $('#wa').value, category: $('#cat').value, state: $('#state').value, city: $('#city').value });
+    if (register) {
+      const role = $('#role').value;
+      Object.assign(body, { role, name: $('#name').value, whatsapp: $('#wa').value });
+      if (role === 'provider') {
+        await categoriesReady;
+        const specialties = [$('#cat1').value, $('#cat2').value].filter(Boolean);
+        Object.assign(body, { category: specialties[0] || '', specialties, state: $('#state').value, city: $('#city').value });
+      }
+    }
     const result = await api(register ? 'register' : 'login', body);
     T = result.token; U = result.user;
     localStorage.t = T; localStorage.u = JSON.stringify(U);
@@ -408,10 +442,11 @@ async function painel(tab = 'ag') {
   ]);
   const services = publicProfile.services || [];
   const profileLink = publicProfileUrl(U.id);
+  const selectedSpecialties = specialtyList(me);
   const tabs = {
     ag: `${buildManualBookingForm(services, slots)}<div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Sem agendamentos ainda.</p>'}</div>`,
     perfil: `<div class="box"><h3>Seu perfil público</h3><p class="muted">Envie este link às suas clientes para elas verem seus serviços e agendarem.</p><div class="share-link-row"><input id="public-link" readonly value="${esc(profileLink)}"><button class="btn" id="copy-link" type="button">Copiar link público</button></div>
-      <label>Nome do estabelecimento</label><input id="n" value="${esc(me.name)}"><label>WhatsApp</label><input id="w" value="${esc(me.whatsapp)}"><label>Especialidade</label><select id="c">${categories.map((category) => `<option ${category === me.category ? 'selected' : ''}>${esc(category)}</option>`).join('')}</select><div class="provider-location-grid"><label>Estado<select id="profile-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option ${state === me.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="ci" value="${esc(me.city)}" autocomplete="address-level2"></label></div>
+      <label>Nome do estabelecimento</label><input id="n" value="${esc(me.name)}"><label>WhatsApp</label><input id="w" value="${esc(me.whatsapp)}"><div class="specialty-grid"><label>Especialidade principal<select id="c1" required>${specialtyOptions(categories, selectedSpecialties[0] || me.category || '')}</select></label><label>Segunda especialidade (opcional)<select id="c2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="profile-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option ${state === me.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="ci" value="${esc(me.city)}" autocomplete="address-level2"></label></div>
       <label>Instagram</label><input id="instagram" type="url" placeholder="https://www.instagram.com/seuperfil" value="${esc(me.instagram_url || '')}"><label>Foto ou logo do perfil</label><input id="logo-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">JPG, PNG ou WebP; a imagem será carregada diretamente do seu dispositivo.</small>${me.logo ? `<div class="upload-preview" ${bg(me.logo)} aria-label="Logo atual"></div>` : ''}
       <label>Sobre você</label><textarea id="b" rows="4">${esc(me.bio)}</textarea><br><br><button class="btn" id="sp">Salvar perfil</button></div>`,
     serv: `<div class="box"><h3>Novo serviço</h3><label>Título</label><input id="t" maxlength="160"><label>Descrição</label><textarea id="d" rows="3"></textarea><label>Valor (R$)</label><input id="pr" type="number" min="0" step="0.01" required><label>Fotos do serviço</label><input id="service-files" type="file" accept="image/jpeg,image/png,image/webp" multiple><small class="muted">Escolha até 4 imagens do dispositivo; imagens grandes são otimizadas antes do envio.</small><br><br><button class="btn" id="ss">Publicar serviço</button></div>${services.map((service) => `<div class="box"><b>${esc(service.title)}</b> — ${brl(service.price)} <button class="btn red sm" onclick="del('service_del',${service.id})">Excluir</button></div>`).join('')}`,
@@ -422,12 +457,15 @@ async function painel(tab = 'ag') {
   app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['agenda','Expediente e agenda']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab]}`;
   const on = (selector, handler) => { if ($(selector)) $(selector).onclick = handler; };
 
+  if (tab === 'perfil') bindSecondarySpecialty('#c1', '#c2', categories, selectedSpecialties[1] || '');
   on('#copy-link', () => copyPublicLink(U.id));
   on('#sp', async () => {
+    const specialties = [$('#c1').value, $('#c2').value].filter(Boolean);
+    if (!specialties.length) return alert('Selecione uma especialidade principal.');
     const selectedFile = $('#logo-file').files[0];
     let logo = me.logo || '';
     if (selectedFile) logo = (await uploadSelected(selectedFile, 'profile')).url;
-    await api('profile_save', { name: $('#n').value, whatsapp: $('#w').value, category: $('#c').value, state: $('#profile-state').value, city: $('#ci').value, logo, bio: $('#b').value, instagram_url: $('#instagram').value });
+    await api('profile_save', { name: $('#n').value, whatsapp: $('#w').value, category: specialties[0], specialties, state: $('#profile-state').value, city: $('#ci').value, logo, bio: $('#b').value, instagram_url: $('#instagram').value });
     alert('Perfil atualizado!');
     painel('perfil');
   });
@@ -475,7 +513,7 @@ async function admin(tab = 'p') {
   const [users, categories, bookings] = await Promise.all([api('admin_users'), api('cats'), api('admin_bookings')]);
   const professionals = users.filter((user) => user.role === 'provider');
   const clients = users.filter((user) => user.role === 'client');
-  const userTable = (people, title, empty) => `<div class="box admin-user-group"><div class="admin-group-heading"><h3>${title}</h3><span class="admin-count">${people.length} cadastro${people.length === 1 ? '' : 's'}</span></div>${people.length ? `<table><tr><th>Nome</th><th>Especialidade</th><th>Localização</th><th>E-mail</th><th>WhatsApp</th><th></th></tr>${people.map((user) => `<tr><td>${esc(user.name)} ${user.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}</td><td>${user.role === 'provider' ? esc(user.category || 'Sem categoria') : '—'}</td><td>${esc([user.city, user.state].filter(Boolean).join(' · ') || '—')}</td><td>${esc(user.email)}</td><td>${esc(user.whatsapp)}</td><td><button class="btn red sm" onclick="adel(${user.id})">Excluir</button></td></tr>`).join('')}</table>` : `<p class="muted">${empty}</p>`}</div>`;
+  const userTable = (people, title, empty) => `<div class="box admin-user-group"><div class="admin-group-heading"><h3>${title}</h3><span class="admin-count">${people.length} cadastro${people.length === 1 ? '' : 's'}</span></div>${people.length ? `<table><tr><th>Nome</th><th>Especialidade</th><th>Localização</th><th>E-mail</th><th>WhatsApp</th><th></th></tr>${people.map((user) => `<tr><td>${esc(user.name)} ${user.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}</td><td>${user.role === 'provider' ? esc(specialtyList(user).join(' · ') || 'Sem categoria') : '—'}</td><td>${esc([user.city, user.state].filter(Boolean).join(' · ') || '—')}</td><td>${esc(user.email)}</td><td>${esc(user.whatsapp)}</td><td><button class="btn red sm" onclick="adel(${user.id})">Excluir</button></td></tr>`).join('')}</table>` : `<p class="muted">${empty}</p>`}</div>`;
   const content = {
     p: userTable(professionals, 'Profissionais', 'Nenhum profissional cadastrado. Os perfis DEMO ficam nesta aba para exclusão posterior.'),
     c: userTable(clients, 'Clientes', 'Nenhum cliente cadastrado.'),
