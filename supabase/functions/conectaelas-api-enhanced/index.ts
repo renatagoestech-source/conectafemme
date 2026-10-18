@@ -23,6 +23,16 @@ function response(data: unknown, status = 200) {
 }
 function bodyString(body: any, key: string) { return String(body?.[key] ?? "").trim(); }
 
+const BRAZIL_STATES = new Set(["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"]);
+function normalizeClientLocation(input: any) {
+  const state = bodyString(input, "state").toUpperCase();
+  const city = bodyString(input, "city");
+  if (state && !BRAZIL_STATES.has(state)) fail(400, "Selecione um estado válido.");
+  if (city.length > 80) fail(400, "A cidade deve ter no máximo 80 caracteres.");
+  if (city && !state) fail(400, "Selecione o estado para informar a cidade.");
+  return { state, city };
+}
+
 async function db(table: string, method = "GET", params: Record<string, string> = {}, payload?: unknown) {
   if (!SUPABASE_URL || !SERVICE_KEY) fail(503, "A configuração segura do banco Supabase está indisponível.");
   const url = new URL(`/rest/v1/${table}`, SUPABASE_URL);
@@ -34,8 +44,8 @@ async function db(table: string, method = "GET", params: Record<string, string> 
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
-    console.error("ConectaFemme specialties database error", res.status);
-    fail(500, "Não foi possível salvar ou carregar as especialidades.");
+    console.error("ConectaFemme enhanced API database error", res.status);
+    fail(500, "Não foi possível concluir a operação no ConectaFemme.");
   }
   return data;
 }
@@ -68,6 +78,29 @@ function tokenUserId(token: string): number {
   }
 }
 
+function safeEqual(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+async function signature(payload: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(SERVICE_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const bytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+async function authenticatedClient(token: string) {
+  const parts = token.split(".");
+  const [payload, sig] = parts;
+  if (parts.length !== 2) fail(401, "Faça login novamente.");
+  if (!payload || !sig || !safeEqual(await signature(payload), sig)) fail(401, "Faça login novamente.");
+  let user: any;
+  try { user = JSON.parse(atob(payload)); } catch { fail(401, "Sessão inválida."); }
+  if (!Number.isSafeInteger(Number(user.id)) || !Number.isFinite(Number(user.exp)) || Number(user.exp) < Math.floor(Date.now() / 1000)) fail(401, "Sessão expirada.");
+  if (user.role !== "client") fail(403, "Esta ação está disponível apenas para clientes.");
+  return { id: Number(user.id), role: "client" };
+}
+
 async function providerRows(ids: number[]) {
   const safeIds = [...new Set(ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
   if (!safeIds.length) return [];
@@ -84,6 +117,10 @@ async function saveSpecialties(userId: number, specialties: string[]) {
     specialties,
   });
   if (Array.isArray(rows) && rows.length === 0) fail(404, "Perfil profissional não encontrado.");
+}
+
+async function saveClientLocation(userId: number, location: { state: string; city: string }) {
+  await db("users", "PATCH", { id: `eq.${userId}`, role: "eq.client" }, location);
 }
 
 function withSpecialties<T extends Record<string, any>>(records: T[], rows: any[]) {
@@ -113,9 +150,22 @@ async function handle(req: Request) {
     try { input = JSON.parse(rawBody); } catch { input = {}; }
   }
 
+  if (action === "client_location") {
+    const client = await authenticatedClient(req.headers.get("x-token") ?? "");
+    if (req.method === "GET") {
+      const rows = await db("users", "GET", { select: "state,city", id: `eq.${client.id}`, role: "eq.client", limit: "1" });
+      return response(Array.isArray(rows) && rows[0] ? rows[0] : { state: "", city: "" });
+    }
+    if (req.method !== "POST") fail(405, "Método não permitido.");
+    const location = normalizeClientLocation(input);
+    await saveClientLocation(client.id, location);
+    return response({ ok: true, ...location });
+  }
+
   let specialties: string[] | null = null;
   if ((action === "register" && input.role === "provider") || action === "profile_save")
     specialties = await validateSpecialties(input);
+  const clientLocation = action === "register" && input.role === "client" ? normalizeClientLocation(input) : null;
 
   const upstreamUrl = new URL(API_URL);
   upstreamUrl.search = incomingUrl.search;
@@ -137,7 +187,9 @@ async function handle(req: Request) {
   try { data = upstreamText ? JSON.parse(upstreamText) : null; } catch { data = upstreamText; }
   if (!upstream.ok) return response(data, upstream.status);
 
-  if (action === "register" && specialties && data?.user?.role === "provider" && data?.token) {
+  if (action === "register" && clientLocation && data?.user?.role === "client" && data?.token) {
+    await saveClientLocation(tokenUserId(String(data.token)), clientLocation);
+  } else if (action === "register" && specialties && data?.user?.role === "provider" && data?.token) {
     await saveSpecialties(tokenUserId(String(data.token)), specialties);
   } else if (action === "profile_save" && specialties) {
     await saveSpecialties(tokenUserId(token), specialties);
@@ -151,8 +203,21 @@ async function handle(req: Request) {
   } else if (action === "my_profile" && data && typeof data === "object") {
     data = withSpecialties([data], await providerRows([tokenUserId(token)]))[0];
   } else if (action === "admin_users" && Array.isArray(data)) {
-    const ids = data.filter((record: any) => record.role === "provider").map((record: any) => Number(record.id));
-    data = withSpecialties(data, await providerRows(ids));
+    const clientIds = data.filter((record: any) => record.role === "client").map((record: any) => Number(record.id));
+    if (clientIds.length) {
+      const locations = await db("users", "GET", {
+        select: "id,state,city",
+        id: `in.(${clientIds.join(",")})`,
+        role: "eq.client",
+        limit: String(clientIds.length),
+      });
+      const byId = new Map((Array.isArray(locations) ? locations : []).map((row: any) => [Number(row.id), row]));
+      data = data.map((record: any) => record.role === "client"
+        ? { ...record, state: byId.get(Number(record.id))?.state ?? "", city: byId.get(Number(record.id))?.city ?? "" }
+        : record);
+    }
+    const providerIds = data.filter((record: any) => record.role === "provider").map((record: any) => Number(record.id));
+    data = withSpecialties(data, await providerRows(providerIds));
   }
   return response(data, upstream.status);
 }

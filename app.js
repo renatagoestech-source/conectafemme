@@ -316,7 +316,7 @@ async function provider(id) {
 function authForm(register) {
   let categoriesReady = Promise.resolve([]);
   app.innerHTML = `<div class="box auth"><h2>${register ? 'Criar conta' : 'Entrar'}</h2>
-    ${register ? `<label>Sou</label><select id="role"><option value="client">Cliente</option><option value="provider">Profissional / Estabelecimento</option></select><label>Nome</label><input id="name"><label>WhatsApp (com DDD)</label><input id="wa"><div id="pf" hidden><div class="specialty-grid"><label>Especialidade principal<select id="cat1" required></select></label><label>Segunda especialidade (opcional)<select id="cat2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="city" autocomplete="address-level2"></label></div></div>` : ''}
+    ${register ? `<label>Sou</label><select id="role"><option value="client">Cliente</option><option value="provider">Profissional / Estabelecimento</option></select><label>Nome</label><input id="name"><label>WhatsApp (com DDD)</label><input id="wa"><div id="client-location" class="client-location-fields"><h3>Localidade (opcional)</h3><p class="muted">Cidade e estado ajudam nas métricas agregadas da comunidade e não aparecem no seu perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-city" maxlength="80" autocomplete="address-level2"></label></div></div><div id="pf" hidden><div class="specialty-grid"><label>Especialidade principal<select id="cat1" required></select></label><label>Segunda especialidade (opcional)<select id="cat2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="city" autocomplete="address-level2"></label></div></div>` : ''}
     <label>E-mail</label><input id="email" type="email"><label>Senha</label><input id="pw" type="password"><br><br><button class="btn" id="ok" style="width:100%">${register ? 'Cadastrar' : 'Entrar'}</button>
     <p class="muted">${register ? 'Já tem conta? <a href="#/login">Entrar</a>' : 'Novo aqui? <a href="#/cadastro">Cadastre-se</a>'}</p></div>`;
   if (register) {
@@ -328,7 +328,11 @@ function authForm(register) {
       console.error('Não foi possível carregar as especialidades:', error);
       return [];
     });
-    $('#role').onchange = (event) => $('#pf').hidden = event.target.value !== 'provider';
+    $('#role').onchange = (event) => {
+      const isProvider = event.target.value === 'provider';
+      $('#pf').hidden = !isProvider;
+      $('#client-location').hidden = isProvider;
+    };
   }
   $('#ok').onclick = async () => {
     const body = { email: $('#email').value, password: $('#pw').value };
@@ -341,6 +345,11 @@ function authForm(register) {
         if (!primary) return alert('Selecione uma especialidade principal.');
         const specialties = [primary, $('#cat2').value].filter(Boolean);
         Object.assign(body, { category: specialties[0] || '', specialties, state: $('#state').value, city: $('#city').value });
+      } else {
+        const state = $('#client-state').value;
+        const city = $('#client-city').value.trim();
+        if (city && !state) return alert('Selecione o estado para informar a cidade.');
+        Object.assign(body, { state, city });
       }
     }
     const result = await api(register ? 'register' : 'login', body);
@@ -437,7 +446,17 @@ async function painel(tab = 'ag') {
   if (U.role === 'admin') return location.hash = '#/admin';
   const bookings = await api('bookings');
   if (U.role === 'client') {
-    app.innerHTML = `<h2>Meus agendamentos</h2><div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Nenhum agendamento.</p>'}</div>`;
+    const location = await api('client_location');
+    const hasLocation = Boolean(location.city || location.state);
+    app.innerHTML = `<h2>Meus agendamentos</h2><details class="box client-location-card" ${hasLocation ? '' : 'open'}><summary><strong>Minha localidade</strong><span class="muted">${hasLocation ? 'Atualize cidade e estado' : 'Opcional · ajuda nas métricas da comunidade'}</span></summary><p class="muted">A localidade é usada apenas em métricas agregadas do painel administrativo e não aparece no perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-location-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option value="${state}" ${state === location.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-location-city" maxlength="80" value="${esc(location.city || '')}" autocomplete="address-level2"></label></div><br><button class="btn" id="client-location-save" type="button">Salvar localidade</button></details><div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Nenhum agendamento.</p>'}</div>`;
+    $('#client-location-save').onclick = async () => {
+      const state = $('#client-location-state').value;
+      const city = $('#client-location-city').value.trim();
+      if (city && !state) return alert('Selecione o estado para informar a cidade.');
+      await api('client_location', { state, city });
+      alert('Localidade salva. Obrigada por ajudar a acompanhar onde nossa comunidade está crescendo.');
+      painel('ag');
+    };
     return;
   }
 
@@ -513,21 +532,116 @@ async function painel(tab = 'ag') {
 window.painel = painel;
 window.del = async (action, id) => { await api(action, { id }); painel(window._tab); };
 
-async function admin(tab = 'p') {
+function adminDashboardMarkup(users, clients, professionals) {
+  const format = (value) => new Intl.NumberFormat('pt-BR').format(value);
+  const clean = (value) => String(value ?? '').trim();
+  const localities = new Set(users.filter((user) => clean(user.city) || clean(user.state)).map((user) => `${clean(user.city).toLocaleLowerCase('pt-BR')}|${clean(user.state).toUpperCase()}`)).size;
+  const clientsWithoutLocation = clients.filter((user) => !clean(user.city) && !clean(user.state)).length;
+  const states = [...new Set(users.map((user) => clean(user.state).toUpperCase()).filter(Boolean))].sort();
+  return `<section class="admin-dashboard">
+    <div class="dashboard-intro"><div><span class="dashboard-kicker">VISÃO GERAL</span><h3>Comunidade ConectaFemme</h3><p class="muted">Acompanhe o crescimento e a distribuição das pessoas cadastradas.</p></div><span class="dashboard-live"><i></i> Dados atualizados agora</span></div>
+    <div class="dashboard-kpis">
+      <article class="dashboard-kpi dashboard-kpi-total"><span class="dashboard-kpi-label">Usuários na plataforma</span><strong>${format(clients.length + professionals.length)}</strong><small>Clientes e profissionais</small></article>
+      <article class="dashboard-kpi dashboard-kpi-clients"><span class="dashboard-kpi-label">Clientes</span><strong>${format(clients.length)}</strong><small>Contas de clientes</small></article>
+      <article class="dashboard-kpi dashboard-kpi-providers"><span class="dashboard-kpi-label">Profissionais</span><strong>${format(professionals.length)}</strong><small>Perfis profissionais</small></article>
+      <article class="dashboard-kpi dashboard-kpi-locations"><span class="dashboard-kpi-label">Localidades mapeadas</span><strong>${format(localities)}</strong><small>Cidade e UF cadastradas</small></article>
+    </div>
+    <div class="dashboard-main-grid">
+      <section class="box dashboard-location-panel">
+        <div class="dashboard-panel-heading"><div><span class="dashboard-kicker">DISTRIBUIÇÃO GEOGRÁFICA</span><h3 id="dashboard-location-title">Usuários por estado</h3><p id="dashboard-location-subtitle" class="muted">Selecione um estado para detalhar as cidades.</p></div><button class="btn out sm" id="dashboard-clear-state" type="button" hidden>Ver todos os estados</button></div>
+        <div class="dashboard-filters"><label>Tipo de perfil<select id="dashboard-role"><option value="all">Todos os perfis</option><option value="client">Clientes</option><option value="provider">Profissionais</option></select></label><label>Estado<select id="dashboard-state"><option value="all">Todos os estados</option><option value="__unreported__">Estado não informado</option>${states.map((state) => `<option value="${esc(state)}">${esc(state)}</option>`).join('')}</select></label></div>
+        <div class="dashboard-legend" id="dashboard-legend"><span><i class="legend-client"></i>Clientes</span><span><i class="legend-provider"></i>Profissionais</span></div>
+        <div class="geo-chart-list" id="dashboard-chart" aria-live="polite"></div>
+      </section>
+      <aside class="box dashboard-insights"><span class="dashboard-kicker">LEITURA RÁPIDA</span><h3>Sobre as localidades</h3>
+        <div class="dashboard-insight-row"><strong>${format(states.length)}</strong><span>estados com cadastro</span></div>
+        <div class="dashboard-insight-row"><strong>${format(users.filter((user) => !clean(user.city) && !clean(user.state)).length)}</strong><span>usuários sem localidade informada</span></div>
+        ${clientsWithoutLocation ? `<div class="dashboard-data-note"><strong>${format(clientsWithoutLocation)} ${clientsWithoutLocation === 1 ? 'cliente sem localidade' : 'clientes sem localidade'}</strong><p>Clientes podem informar ou atualizar cidade e UF no painel de agendamentos. O dado é opcional e não aparece publicamente.</p></div>` : '<div class="dashboard-data-note is-complete"><strong>Localidades dos clientes registradas</strong><p>Os clientes cadastrados já têm localidade para compor as métricas.</p></div>'}
+        <p class="dashboard-source">A distribuição usa apenas os dados de cidade e UF dos cadastros; as barras podem ser filtradas por perfil e estado.</p>
+      </aside>
+    </div>
+  </section>`;
+}
+
+function bindAdminDashboard(users) {
+  const roleSelect = $('#dashboard-role');
+  const stateSelect = $('#dashboard-state');
+  const chart = $('#dashboard-chart');
+  const clearState = $('#dashboard-clear-state');
+  if (!roleSelect || !stateSelect || !chart) return;
+  const clean = (value) => String(value ?? '').trim();
+  const render = () => {
+    const role = roleSelect.value;
+    const selectedState = stateSelect.value;
+    let population = users.filter((user) => ['client', 'provider'].includes(user.role));
+    if (role !== 'all') population = population.filter((user) => user.role === role);
+    if (selectedState !== 'all') population = population.filter((user) => {
+      const state = clean(user.state).toUpperCase();
+      return selectedState === '__unreported__' ? !state : state === selectedState;
+    });
+    const groups = new Map();
+    for (const user of population) {
+      const state = clean(user.state).toUpperCase();
+      const city = clean(user.city);
+      const key = selectedState === 'all' ? (state || '__unreported__') : (city.toLocaleLowerCase('pt-BR') || '__no_city__');
+      const label = selectedState === 'all' ? (state || 'Estado não informado') : (city || 'Cidade não informada');
+      if (!groups.has(key)) groups.set(key, { key, label, clients: 0, providers: 0 });
+      groups.get(key)[user.role === 'client' ? 'clients' : 'providers']++;
+    }
+    let rows = [...groups.values()].sort((a, b) => (b.clients + b.providers) - (a.clients + a.providers) || a.label.localeCompare(b.label, 'pt-BR'));
+    if (selectedState !== 'all' && rows.length > 8) {
+      const rest = rows.slice(8).reduce((total, row) => ({ clients: total.clients + row.clients, providers: total.providers + row.providers }), { clients: 0, providers: 0 });
+      rows = [...rows.slice(0, 8), { key: '__other__', label: 'Outras cidades', ...rest }];
+    }
+    const max = Math.max(1, ...rows.map((row) => row.clients + row.providers));
+    const detailLabel = selectedState === '__unreported__' ? 'sem estado informado' : selectedState;
+    $('#dashboard-location-title').textContent = selectedState === 'all' ? 'Usuários por estado' : `Cidades · ${detailLabel}`;
+    $('#dashboard-location-subtitle').textContent = selectedState === 'all' ? 'Clique em uma barra para detalhar as cidades do estado.' : 'Distribuição de clientes e profissionais nesta localidade.';
+    $('#dashboard-legend').hidden = role !== 'all';
+    if (clearState) clearState.hidden = selectedState === 'all';
+    if (!rows.length) {
+      chart.innerHTML = '<div class="dashboard-empty">Nenhum cadastro encontrado para estes filtros.</div>';
+      return;
+    }
+    chart.innerHTML = rows.map((row) => {
+      const total = row.clients + row.providers;
+      const displayed = role === 'client' ? row.clients : role === 'provider' ? row.providers : total;
+      const clientWidth = role === 'provider' ? 0 : row.clients / max * 100;
+      const providerWidth = role === 'client' ? 0 : row.providers / max * 100;
+      const tag = selectedState === 'all' ? 'button' : 'div';
+      const attrs = selectedState === 'all' ? `type="button" data-state="${esc(row.key)}"` : '';
+      return `<${tag} class="geo-bar-row" ${attrs}><span class="geo-row-heading"><strong>${esc(row.label)}</strong><span>${formatAdminNumber(displayed)} ${displayed === 1 ? 'usuário' : 'usuários'}</span></span><span class="geo-bar-track"><i class="geo-bar-client" style="width:${clientWidth}%"></i><i class="geo-bar-provider" style="width:${providerWidth}%"></i></span></${tag}>`;
+    }).join('');
+    chart.querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', () => {
+      stateSelect.value = button.dataset.state;
+      render();
+    }));
+  };
+  roleSelect.addEventListener('change', render);
+  stateSelect.addEventListener('change', render);
+  if (clearState) clearState.addEventListener('click', () => { stateSelect.value = 'all'; render(); });
+  render();
+}
+
+function formatAdminNumber(value) { return new Intl.NumberFormat('pt-BR').format(value); }
+
+async function admin(tab = 'd') {
   if (!U || U.role !== 'admin') return location.hash = '#/login';
   const [users, categories, bookings] = await Promise.all([api('admin_users'), api('cats'), api('admin_bookings')]);
   const professionals = users.filter((user) => user.role === 'provider');
   const clients = users.filter((user) => user.role === 'client');
   const userTable = (people, title, empty) => `<div class="box admin-user-group"><div class="admin-group-heading"><h3>${title}</h3><span class="admin-count">${people.length} cadastro${people.length === 1 ? '' : 's'}</span></div>${people.length ? `<table><tr><th>Nome</th><th>Especialidade</th><th>Localização</th><th>E-mail</th><th>WhatsApp</th><th></th></tr>${people.map((user) => `<tr><td>${esc(user.name)} ${user.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}</td><td>${user.role === 'provider' ? esc(specialtyList(user).join(' · ') || 'Sem categoria') : '—'}</td><td>${esc([user.city, user.state].filter(Boolean).join(' · ') || '—')}</td><td>${esc(user.email)}</td><td>${esc(user.whatsapp)}</td><td><button class="btn red sm" onclick="adel(${user.id})">Excluir</button></td></tr>`).join('')}</table>` : `<p class="muted">${empty}</p>`}</div>`;
   const content = {
+    d: adminDashboardMarkup(users, clients, professionals),
     p: userTable(professionals, 'Profissionais', 'Nenhum profissional cadastrado. Os perfis DEMO ficam nesta aba para exclusão posterior.'),
     c: userTable(clients, 'Clientes', 'Nenhum cliente cadastrado.'),
     k: `<div class="box"><div class="bar"><input id="nc" placeholder="Nova categoria"><button class="btn" id="ac">Adicionar</button></div><br>${categories.map((category) => `<span class="tag">${esc(category)} <a href="#" onclick="acd('${esc(category)}');return false">✕</a></span> `).join('')}</div>`,
     b: `<div class="box"><table><tr><th>Data</th><th>Serviço</th><th>Cliente</th><th>Profissional</th><th>Status</th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${esc(booking.hour)}</td><td>${esc(booking.title)}</td><td>${esc(booking.client || 'Agendamento manual')}</td><td>${esc(booking.provider)}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td></tr>`).join('')}</table></div>`,
     s: `<div class="box security-box"><h3>Alterar senha administrativa</h3><p class="muted">Use esta área para trocar a senha do acesso administrativo. A senha atual é necessária e a nova senha deve ter pelo menos 8 caracteres.</p><label>Senha atual</label><input id="admin-current-password" type="password" autocomplete="current-password"><label>Nova senha</label><input id="admin-new-password" type="password" minlength="8" autocomplete="new-password"><label>Confirmar nova senha</label><input id="admin-confirm-password" type="password" minlength="8" autocomplete="new-password"><br><br><button class="btn" id="change-admin-password" type="button">Salvar nova senha</button></div>`,
   };
-  app.innerHTML = `<section class="admin-heading"><div class="admin-stats"><div class="admin-stat admin-stat-total"><strong>${professionals.length + clients.length}</strong><span>usuários ativos</span></div><div class="admin-stat admin-stat-provider"><strong>${professionals.length}</strong><span>profissionais</span></div><div class="admin-stat admin-stat-client"><strong>${clients.length}</strong><span>clientes</span></div></div><div class="admin-heading-copy"><span class="eyebrow">PAINEL DE CONTROLE</span><h2>Administração</h2><p class="muted">Acompanhe a comunidade e a operação do ConectaFemme.</p></div></section><div class="tabs admin-tabs">${[['p','Profissionais'],['c','Clientes'],['k','Categorias'],['b','Agendamentos'],['s','Segurança']].map(([key,label]) => `<button class="${key === tab ? 'on' : ''}" onclick="admin('${key}')">${label}</button>`).join('')}</div>${content[tab]}`;
+  app.innerHTML = `<section class="admin-heading"><div class="admin-heading-copy"><span class="eyebrow">PAINEL DE CONTROLE</span><h2>Administração</h2><p class="muted">Acompanhe a comunidade e a operação do ConectaFemme.</p></div></section><div class="tabs admin-tabs">${[['d','Dashboard'],['p','Profissionais'],['c','Clientes'],['k','Categorias'],['b','Agendamentos'],['s','Segurança']].map(([key,label]) => `<button class="${key === tab ? 'on' : ''}" onclick="admin('${key}')">${label}</button>`).join('')}</div>${content[tab] || content.d}`;
   window._at = tab;
+  if (tab === 'd') bindAdminDashboard(users);
   if ($('#ac')) $('#ac').onclick = async () => { await api('admin_cat_add', { name: $('#nc').value }); admin('k'); };
   if ($('#change-admin-password')) $('#change-admin-password').onclick = async () => {
     const current_password = $('#admin-current-password').value;

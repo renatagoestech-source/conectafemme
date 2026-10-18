@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS public.users (
   email varchar(160) NOT NULL UNIQUE,
   pass varchar(255) NOT NULL,
   whatsapp varchar(30) NOT NULL DEFAULT '',
+  state varchar(2) NOT NULL DEFAULT '',
+  city varchar(80) NOT NULL DEFAULT '',
   created timestamptz NOT NULL DEFAULT now(),
   is_demo boolean NOT NULL DEFAULT false
 );

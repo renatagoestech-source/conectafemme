@@ -1,0 +1,3 @@
+ALTER TABLE public.users
+  ADD COLUMN IF NOT EXISTS state varchar(2) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS city varchar(80) NOT NULL DEFAULT '';
