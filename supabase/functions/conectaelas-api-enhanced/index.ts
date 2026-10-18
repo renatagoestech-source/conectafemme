@@ -105,7 +105,7 @@ async function providerRows(ids: number[]) {
   const safeIds = [...new Set(ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
   if (!safeIds.length) return [];
   return await db("providers", "GET", {
-    select: "user_id,category,specialties",
+    select: "user_id,category,specialties,cover_image",
     user_id: `in.(${safeIds.join(",")})`,
     limit: String(safeIds.length),
   });
@@ -117,6 +117,22 @@ async function saveSpecialties(userId: number, specialties: string[]) {
     specialties,
   });
   if (Array.isArray(rows) && rows.length === 0) fail(404, "Perfil profissional não encontrado.");
+}
+
+function normalizeCoverImage(value: unknown): string {
+  const image = String(value ?? "").trim();
+  if (!image) return "";
+  if (image.length > 500) fail(400, "A imagem de apresentação excede o tamanho permitido.");
+  let parsed: URL;
+  try { parsed = new URL(image); } catch { fail(400, "Envie uma imagem válida do ConectaFemme."); }
+  const storagePath = "/storage/v1/object/public/conectaelas-images/";
+  if (parsed.origin !== new URL(SUPABASE_URL).origin || !parsed.pathname.startsWith(storagePath) || parsed.search || parsed.hash)
+    fail(400, "Envie uma imagem carregada pelo ConectaFemme.");
+  return parsed.toString();
+}
+
+async function saveCoverImage(userId: number, coverImage: string) {
+  await db("providers", "PATCH", { user_id: `eq.${userId}` }, { cover_image: coverImage });
 }
 
 async function saveClientLocation(userId: number, location: { state: string; city: string }) {
@@ -132,7 +148,7 @@ function withSpecialties<T extends Record<string, any>>(records: T[], rows: any[
       ? profile.specialties
       : [profile?.category ?? record.category].filter(Boolean);
     const specialties = [...new Set(saved.map((value: unknown) => String(value).trim()).filter(Boolean))].slice(0, 2);
-    return { ...record, category: profile?.category ?? record.category ?? specialties[0], specialties };
+    return { ...record, category: profile?.category ?? record.category ?? specialties[0], specialties, cover_image: profile?.cover_image ?? record.cover_image ?? "" };
   });
 }
 
@@ -192,7 +208,10 @@ async function handle(req: Request) {
   } else if (action === "register" && specialties && data?.user?.role === "provider" && data?.token) {
     await saveSpecialties(tokenUserId(String(data.token)), specialties);
   } else if (action === "profile_save" && specialties) {
-    await saveSpecialties(tokenUserId(token), specialties);
+    const userId = tokenUserId(token);
+    await saveSpecialties(userId, specialties);
+    if (Object.prototype.hasOwnProperty.call(input, "cover_image"))
+      await saveCoverImage(userId, normalizeCoverImage(input.cover_image));
   } else if (action === "providers" && Array.isArray(data)) {
     const rows = await providerRows(data.map((record: any) => Number(record.id)));
     data = withSpecialties(data, rows);

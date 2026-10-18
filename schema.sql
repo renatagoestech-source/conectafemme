@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS public.providers (
   specialties text[] NOT NULL DEFAULT '{}'::text[] CHECK (cardinality(specialties) <= 2),
   bio text NOT NULL DEFAULT '',
   logo varchar(500) NOT NULL DEFAULT '',
+  cover_image varchar(500) NOT NULL DEFAULT '',
   state varchar(2) NOT NULL DEFAULT '',
   city varchar(80) NOT NULL DEFAULT '',
   instagram_url varchar(255) NOT NULL DEFAULT '',

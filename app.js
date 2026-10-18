@@ -248,7 +248,7 @@ async function home() {
     const query = `&q=${encodeURIComponent($('#q').value)}&cat=${encodeURIComponent($('#cat').value)}&state=${encodeURIComponent($('#state').value)}&city=${encodeURIComponent($('#city').value)}&max_price=${encodeURIComponent($('#max-price').value)}&sort=${encodeURIComponent($('#sort').value)}`;
     const providers = await api('providers', null, query);
     $('#results-count').textContent = `${providers.length} profissional${providers.length === 1 ? '' : 'is'} encontrado${providers.length === 1 ? '' : 's'}`;
-    $('#list').innerHTML = providers.length ? providers.map((professional) => { const cover = imgs(professional.img)[0] || professional.logo || 'assets/conectafemme-logo.png'; return `<a class="card" href="#/p/${professional.id}">
+    $('#list').innerHTML = providers.length ? providers.map((professional) => { const cover = professional.cover_image || professional.logo || 'assets/conectafemme-logo.png'; return `<a class="card" href="#/p/${professional.id}">
       <div class="img" ${bg(cover)}><div class="logo" ${bg(professional.logo || cover)}></div></div>
       <div class="info"><b>${esc(professional.name)}</b> ${professional.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}${professional.is_founder ? '<span class="founder-badge compact">✦ Fundador</span>' : ''}<br>${specialtyTags(professional)}<div class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</div>${ratingSummary(professional.rating_avg, professional.review_count)}
       ${professional.min_price != null ? `<div>a partir de <span class="price">${brl(professional.min_price)}</span></div>` : '<div class="muted">Consulte os serviços</div>'}<span class="card-link btn sm">Ver perfil <span aria-hidden="true">→</span></span></div></a>`; }).join('') : '<p class="muted">Nenhum profissional encontrado. Tente ampliar o preço máximo ou alterar a categoria.</p>';
@@ -273,11 +273,17 @@ async function provider(id) {
   const professional = await api('provider', null, `&id=${encodeURIComponent(id)}`);
   let selectedService = null;
   let selectedSlot = null;
-  const days = [...new Set(professional.slots.map((slot) => slot.day))];
+  const availableSlots = professional.slots.filter((slot) => !slot.booked && slot.available !== false);
+  const days = [...new Set(availableSlots.map((slot) => slot.day))];
+  const calendarMarkup = `<section class="box booking-calendar"><div class="booking-calendar-header"><span class="booking-kicker">AGENDA</span><h3>${professional.is_demo ? 'Agenda de exemplo' : 'Agendar atendimento'}</h3><p class="booking-intro">${professional.is_demo ? 'Escolha um dia para conferir os horários ilustrativos.' : 'Escolha um dia para consultar os horários livres.'}</p></div>
+    ${professional.is_demo ? '<p class="demo-note">Horários ilustrativos. Perfis demonstrativos não aceitam agendamentos.</p>' : ''}
+    <div class="booking-date-control"><label for="day">Dia disponível</label><select id="day" ${days.length ? '' : 'disabled'}><option value="">${days.length ? 'Selecione um dia' : 'Nenhum horário disponível'}</option>${days.map((day) => `<option value="${esc(day)}">${fd(day)}</option>`).join('')}</select></div>
+    <div class="booking-time-panel"><h4 class="booking-time-heading">Horários disponíveis</h4><div class="booking-time-grid" id="hrs" aria-live="polite"><p class="booking-calendar-empty">${days.length ? 'Selecione um dia para ver os horários disponíveis.' : 'Nenhum horário disponível no momento.'}</p></div></div>
+    ${professional.is_demo ? '' : '<p id="sel" class="booking-selection-summary">Escolha um serviço acima.</p><button class="btn booking-confirm" id="bk" type="button" disabled>Confirmar agendamento</button>'}</section>`;
   const instagram = professional.instagram_url
     ? `<a class="btn out sm" href="${esc(professional.instagram_url)}" target="_blank" rel="noopener noreferrer">Instagram</a>`
     : '';
-  app.innerHTML = `<div class="profile-head"><div class="lg" ${bg(professional.logo)}></div><div><h2 style="margin:0">${esc(professional.name)}</h2>${specialtyTags(professional)} ${professional.is_demo ? '<span class="tag demo-tag">Perfil demonstrativo</span>' : ''} ${professional.is_founder ? '<span class="founder-badge compact">✦ Profissional Fundador</span>' : ''} <span class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</span><div class="profile-rating">${ratingSummary(professional.rating_avg, professional.review_count)}</div><p>${esc(professional.bio || '')}</p>
+  app.innerHTML = `<div class="profile-head"><div class="profile-identity-images"><div class="lg" ${bg(professional.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Logo de ${esc(professional.name)}"></div><div class="profile-cover" ${bg(professional.cover_image || professional.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Imagem de apresentação de ${esc(professional.name)}"></div></div><div class="profile-copy"><h2 style="margin:0">${esc(professional.name)}</h2>${specialtyTags(professional)} ${professional.is_demo ? '<span class="tag demo-tag">Perfil demonstrativo</span>' : ''} ${professional.is_founder ? '<span class="founder-badge compact">✦ Profissional Fundador</span>' : ''} <span class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</span><div class="profile-rating">${ratingSummary(professional.rating_avg, professional.review_count)}</div><p>${esc(professional.bio || '')}</p>
     ${professional.is_demo ? '<p class="muted">Este perfil fictício é apenas para demonstração; o contato não está ativo.</p>' : `<div class="profile-actions"><a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(professional.whatsapp, `Olá ${professional.name}! Vi seu perfil no ConectaFemme.`)}">WhatsApp</a>${instagram}</div>`}</div></div>
     <h3>Serviços</h3><div class="row service-gallery">${professional.services.map((service) => {
       const images = imgs(service.images);
@@ -286,22 +292,46 @@ async function provider(id) {
         ${professional.is_demo ? '<span class="tag demo-tag">Serviço de exemplo</span>' : `<button class="btn sm" data-s="${service.id}">Escolher</button>`}</div>`;
     }).join('') || '<p class="muted">Sem serviços ainda.</p>'}</div>
     ${professional.reviews?.length ? `<details class="box reviews-box"><summary class="reviews-summary"><span><strong>Avaliações de clientes</strong><small>Ver comentários deixados</small></span>${ratingSummary(professional.rating_avg, professional.review_count)}</summary><div class="review-list">${professional.reviews.slice(0, 6).map((review) => `<article class="review-item"><div><strong>${esc(review.client_name || 'Cliente')}</strong><span class="review-stars">${'★'.repeat(Number(review.rating))}${'☆'.repeat(5 - Number(review.rating))}</span></div><p>${esc(review.comment || 'Atendimento avaliado pela cliente.')}</p></article>`).join('')}</div></details>` : ''}
-    ${professional.is_demo ? `<div class="box"><h3>Agenda de exemplo</h3><p class="demo-note">Horários ilustrativos. Perfis fictícios não aceitam agendamentos.</p><div class="slots">${professional.slots.map((slot) => `<span class="tag">${fd(slot.day)} · ${slot.hour}</span>`).join('') || '<span class="muted">Agenda de demonstração.</span>'}</div></div>` : `<div class="box"><h3>Agendar</h3><p id="sel" class="muted">Escolha um serviço acima.</p><label>Dia</label><select id="day"><option value="">Selecione</option>${days.map((day) => `<option value="${day}">${fd(day)}</option>`).join('')}</select><label>Horário disponível</label><div class="slots" id="hrs"></div><br><button class="btn" id="bk">Confirmar agendamento</button></div>`}`;
+    ${calendarMarkup}`;
+  const syncBookingButton = () => {
+    const button = $('#bk');
+    if (button) button.disabled = !selectedService || !selectedSlot;
+  };
+  $('#day').onchange = (event) => {
+    selectedSlot = null;
+    const day = event.target.value;
+    if (!day) {
+      $('#hrs').innerHTML = `<p class="booking-calendar-empty">${days.length ? 'Selecione um dia para ver os horários disponíveis.' : 'Nenhum horário disponível no momento.'}</p>`;
+      syncBookingButton();
+      return;
+    }
+    const slotsForDay = availableSlots.filter((slot) => slot.day === day);
+    if (!slotsForDay.length) {
+      $('#hrs').innerHTML = '<p class="booking-calendar-empty">Não há horários livres nesta data.</p>';
+      syncBookingButton();
+      return;
+    }
+    if (professional.is_demo) {
+      $('#hrs').innerHTML = slotsForDay.map((slot) => `<span class="booking-time-chip is-demo">${esc(slot.hour)}</span>`).join('');
+      return;
+    }
+    $('#hrs').innerHTML = slotsForDay.map((slot) => `<button class="booking-time-chip" type="button" data-i="${esc(slot.id)}">${esc(slot.hour)}</button>`).join('');
+    document.querySelectorAll('#hrs [data-i]').forEach((button) => button.onclick = () => {
+      selectedSlot = button.dataset.i;
+      document.querySelectorAll('#hrs .booking-time-chip').forEach((item) => item.classList.remove('on'));
+      button.classList.add('on');
+      syncBookingButton();
+    });
+    syncBookingButton();
+  };
   if (!professional.is_demo) {
     document.querySelectorAll('[data-s]').forEach((button) => button.onclick = () => {
       selectedService = button.dataset.s;
-      $('#sel').textContent = `Serviço: ${button.parentNode.querySelector('h4').textContent}`;
+      document.querySelectorAll('[data-s]').forEach((item) => item.classList.remove('service-selected'));
+      button.classList.add('service-selected');
+      $('#sel').textContent = `Serviço selecionado: ${button.parentNode.querySelector('h4').textContent}`;
+      syncBookingButton();
     });
-    $('#day').onchange = (event) => {
-      selectedSlot = null;
-      $('#hrs').innerHTML = professional.slots.filter((slot) => slot.day === event.target.value)
-        .map((slot) => `<button data-i="${slot.id}">${slot.hour}</button>`).join('');
-      document.querySelectorAll('#hrs button').forEach((button) => button.onclick = () => {
-        selectedSlot = button.dataset.i;
-        document.querySelectorAll('#hrs button').forEach((item) => item.classList.remove('on'));
-        button.classList.add('on');
-      });
-    };
     $('#bk').onclick = async () => {
       if (!U || U.role !== 'client') { alert('Entre como cliente para agendar.'); location.hash = '#/login'; return; }
       if (!selectedService || !selectedSlot) { alert('Escolha serviço, dia e horário.'); return; }
@@ -470,7 +500,9 @@ async function painel(tab = 'ag') {
     ag: `${buildManualBookingForm(services, slots)}<div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Sem agendamentos ainda.</p>'}</div>`,
     perfil: `<div class="box"><h3>Seu perfil público</h3><p class="muted">Envie este link às suas clientes para elas verem seus serviços e agendarem.</p><div class="share-link-row"><input id="public-link" readonly value="${esc(profileLink)}"><button class="btn" id="copy-link" type="button">Copiar link público</button></div>
       <label>Nome do estabelecimento</label><input id="n" value="${esc(me.name)}"><label>WhatsApp</label><input id="w" value="${esc(me.whatsapp)}"><div class="specialty-grid"><label>Especialidade principal<select id="c1" required>${specialtyOptions(categories, selectedSpecialties[0] || me.category || '')}</select></label><label>Segunda especialidade (opcional)<select id="c2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="profile-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option ${state === me.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="ci" value="${esc(me.city)}" autocomplete="address-level2"></label></div>
-      <label>Instagram</label><input id="instagram" type="url" placeholder="https://www.instagram.com/seuperfil" value="${esc(me.instagram_url || '')}"><label>Foto ou logo do perfil</label><input id="logo-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">JPG, PNG ou WebP; a imagem será carregada diretamente do seu dispositivo.</small>${me.logo ? `<div class="upload-preview" ${bg(me.logo)} aria-label="Logo atual"></div>` : ''}
+      <label>Instagram</label><input id="instagram" type="url" placeholder="https://www.instagram.com/seuperfil" value="${esc(me.instagram_url || '')}">
+      <div class="profile-image-settings"><div class="profile-image-field"><label for="logo-file">Logo do profissional (imagem redonda)</label><input id="logo-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">Esta é a marca que aparece no círculo do perfil.</small><div class="profile-image-preview is-round" ${bg(me.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Prévia da logo"></div></div>
+      <div class="profile-image-field"><label for="cover-file">Foto de apresentação (quadrada)</label><input id="cover-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">Opcional. Se não enviar outra imagem, a logo será usada. Fotos de serviços ficam apenas na aba Serviços.</small><div id="cover-preview" class="profile-image-preview is-square" ${bg(me.cover_image || me.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Prévia da imagem quadrada"></div><p id="cover-state" class="profile-image-state">${me.cover_image ? 'Imagem quadrada atual.' : 'A logo será usada na imagem quadrada.'}</p><button class="btn out sm" id="cover-use-logo" type="button">Usar a logo no quadrado</button></div></div>
       <label>Sobre você</label><textarea id="b" rows="4">${esc(me.bio)}</textarea><br><br><button class="btn" id="sp">Salvar perfil</button></div>`,
     serv: `<div class="box"><h3>Novo serviço</h3><label>Título</label><input id="t" maxlength="160"><label>Descrição</label><textarea id="d" rows="3"></textarea><label>Valor (R$)</label><input id="pr" type="number" min="0" step="0.01" required><label>Fotos do serviço</label><input id="service-files" type="file" accept="image/jpeg,image/png,image/webp" multiple><small class="muted">Escolha até 4 imagens do dispositivo; imagens grandes são otimizadas antes do envio.</small><br><br><button class="btn" id="ss">Publicar serviço</button></div>${services.map((service) => `<div class="box"><b>${esc(service.title)}</b> — ${brl(service.price)} <button class="btn red sm" onclick="del('service_del',${service.id})">Excluir</button></div>`).join('')}`,
     agenda: `<div class="box"><h3>Expediente semanal</h3><p class="muted">Marque os dias de atendimento, informe abertura, fechamento e intervalo. Vamos gerar horários disponíveis para os próximos 60 dias.</p><div class="week-schedule">${weeklyScheduleEditor(me.weekly_schedule || {})}</div><br><button class="btn" id="save-weekly">Salvar expediente e gerar horários</button></div>
@@ -480,16 +512,32 @@ async function painel(tab = 'ag') {
   app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['agenda','Expediente e agenda']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab]}`;
   const on = (selector, handler) => { if ($(selector)) $(selector).onclick = handler; };
 
-  if (tab === 'perfil') bindSecondarySpecialty('#c1', '#c2', categories, selectedSpecialties[1] || '');
+  let useLogoAsCover = false;
+  if (tab === 'perfil') {
+    bindSecondarySpecialty('#c1', '#c2', categories, selectedSpecialties[1] || '');
+    $('#cover-file').addEventListener('change', () => {
+      useLogoAsCover = false;
+      $('#cover-state').textContent = $('#cover-file').files[0] ? 'A nova imagem será usada no quadrado ao salvar.' : 'A imagem atual será mantida.';
+    });
+  }
+  on('#cover-use-logo', () => {
+    useLogoAsCover = true;
+    $('#cover-file').value = '';
+    $('#cover-state').textContent = 'A logo será usada no quadrado ao salvar.';
+  });
   on('#copy-link', () => copyPublicLink(U.id));
   on('#sp', async () => {
     const primary = $('#c1').value;
     if (!primary) return alert('Selecione uma especialidade principal.');
     const specialties = [primary, $('#c2').value].filter(Boolean);
     const selectedFile = $('#logo-file').files[0];
+    const selectedCoverFile = $('#cover-file').files[0];
     let logo = me.logo || '';
+    let coverImage = me.cover_image || '';
     if (selectedFile) logo = (await uploadSelected(selectedFile, 'profile')).url;
-    await api('profile_save', { name: $('#n').value, whatsapp: $('#w').value, category: specialties[0], specialties, state: $('#profile-state').value, city: $('#ci').value, logo, bio: $('#b').value, instagram_url: $('#instagram').value });
+    if (selectedCoverFile) coverImage = (await uploadSelected(selectedCoverFile, 'profile')).url;
+    else if (useLogoAsCover) coverImage = '';
+    await api('profile_save', { name: $('#n').value, whatsapp: $('#w').value, category: specialties[0], specialties, state: $('#profile-state').value, city: $('#ci').value, logo, cover_image: coverImage, bio: $('#b').value, instagram_url: $('#instagram').value });
     alert('Perfil atualizado!');
     painel('perfil');
   });
