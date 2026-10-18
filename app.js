@@ -535,15 +535,18 @@ window.del = async (action, id) => { await api(action, { id }); painel(window._t
 function adminDashboardMarkup(users, clients, professionals) {
   const format = (value) => new Intl.NumberFormat('pt-BR').format(value);
   const clean = (value) => String(value ?? '').trim();
-  const localities = new Set(users.filter((user) => clean(user.city) || clean(user.state)).map((user) => `${clean(user.city).toLocaleLowerCase('pt-BR')}|${clean(user.state).toUpperCase()}`)).size;
-  const clientsWithoutLocation = clients.filter((user) => !clean(user.city) && !clean(user.state)).length;
-  const states = [...new Set(users.map((user) => clean(user.state).toUpperCase()).filter(Boolean))].sort();
+  const realUsers = users.filter((user) => !user.is_demo);
+  const realClients = clients.filter((user) => !user.is_demo);
+  const realProfessionals = professionals.filter((user) => !user.is_demo);
+  const localities = new Set(realUsers.filter((user) => clean(user.city) || clean(user.state)).map((user) => `${clean(user.city).toLocaleLowerCase('pt-BR')}|${clean(user.state).toUpperCase()}`)).size;
+  const clientsWithoutLocation = realClients.filter((user) => !clean(user.city) && !clean(user.state)).length;
+  const states = [...new Set(realUsers.map((user) => clean(user.state).toUpperCase()).filter(Boolean))].sort();
   return `<section class="admin-dashboard">
     <div class="dashboard-intro"><div><span class="dashboard-kicker">VISÃO GERAL</span><h3>Comunidade ConectaFemme</h3><p class="muted">Acompanhe o crescimento e a distribuição das pessoas cadastradas.</p></div><span class="dashboard-live"><i></i> Dados atualizados agora</span></div>
     <div class="dashboard-kpis">
-      <article class="dashboard-kpi dashboard-kpi-total"><span class="dashboard-kpi-label">Usuários na plataforma</span><strong>${format(clients.length + professionals.length)}</strong><small>Clientes e profissionais</small></article>
-      <article class="dashboard-kpi dashboard-kpi-clients"><span class="dashboard-kpi-label">Clientes</span><strong>${format(clients.length)}</strong><small>Contas de clientes</small></article>
-      <article class="dashboard-kpi dashboard-kpi-providers"><span class="dashboard-kpi-label">Profissionais</span><strong>${format(professionals.length)}</strong><small>Perfis profissionais</small></article>
+      <article class="dashboard-kpi dashboard-kpi-total"><span class="dashboard-kpi-label">Contas reais na plataforma</span><strong>${format(realClients.length + realProfessionals.length)}</strong><small>Perfis DEMO ficam de fora</small></article>
+      <article class="dashboard-kpi dashboard-kpi-clients"><span class="dashboard-kpi-label">Clientes</span><strong>${format(realClients.length)}</strong><small>Contas reais de clientes</small></article>
+      <article class="dashboard-kpi dashboard-kpi-providers"><span class="dashboard-kpi-label">Profissionais</span><strong>${format(realProfessionals.length)}</strong><small>Perfis profissionais reais</small></article>
       <article class="dashboard-kpi dashboard-kpi-locations"><span class="dashboard-kpi-label">Localidades mapeadas</span><strong>${format(localities)}</strong><small>Cidade e UF cadastradas</small></article>
     </div>
     <div class="dashboard-main-grid">
@@ -557,7 +560,7 @@ function adminDashboardMarkup(users, clients, professionals) {
         <div class="dashboard-insight-row"><strong>${format(states.length)}</strong><span>estados com cadastro</span></div>
         <div class="dashboard-insight-row"><strong>${format(users.filter((user) => !clean(user.city) && !clean(user.state)).length)}</strong><span>usuários sem localidade informada</span></div>
         ${clientsWithoutLocation ? `<div class="dashboard-data-note"><strong>${format(clientsWithoutLocation)} ${clientsWithoutLocation === 1 ? 'cliente sem localidade' : 'clientes sem localidade'}</strong><p>Clientes podem informar ou atualizar cidade e UF no painel de agendamentos. O dado é opcional e não aparece publicamente.</p></div>` : '<div class="dashboard-data-note is-complete"><strong>Localidades dos clientes registradas</strong><p>Os clientes cadastrados já têm localidade para compor as métricas.</p></div>'}
-        <p class="dashboard-source">A distribuição usa apenas os dados de cidade e UF dos cadastros; as barras podem ser filtradas por perfil e estado.</p>
+        <p class="dashboard-source">A distribuição usa cidade e UF cadastradas; perfis DEMO são excluídos dos indicadores e podem ser removidos na lista administrativa.</p>
       </aside>
     </div>
   </section>`;
@@ -573,7 +576,7 @@ function bindAdminDashboard(users) {
   const render = () => {
     const role = roleSelect.value;
     const selectedState = stateSelect.value;
-    let population = users.filter((user) => ['client', 'provider'].includes(user.role));
+    let population = users.filter((user) => !user.is_demo && ['client', 'provider'].includes(user.role));
     if (role !== 'all') population = population.filter((user) => user.role === role);
     if (selectedState !== 'all') population = population.filter((user) => {
       const state = clean(user.state).toUpperCase();
