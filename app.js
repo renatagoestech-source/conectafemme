@@ -410,16 +410,106 @@ window.st = async (id, status) => {
   painel();
 };
 
+function legacyScheduleTimes(settings) {
+  if (Array.isArray(settings.times)) return [...new Set(settings.times.map(String).filter((time) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)))].sort();
+  const toMinutes = (time) => {
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(time || ''))) return null;
+    const [hours, minutes] = time.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+  const start = toMinutes(settings.start), end = toMinutes(settings.end), duration = Number(settings.duration || 30);
+  const breakStart = toMinutes(settings.break_start), breakEnd = toMinutes(settings.break_end);
+  if (start === null || end === null || start >= end || !Number.isInteger(duration) || duration < 15 || duration > 240) return [];
+  const times = [];
+  for (let minute = start; minute + duration <= end; minute += duration) {
+    if (breakStart !== null && breakEnd !== null && minute < breakEnd && minute + duration > breakStart) continue;
+    times.push(`${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`);
+  }
+  return times;
+}
+
+function timeEntriesMarkup(times, inputClass, removeClass) {
+  return times.map((time) => `<div class="availability-time"><input class="${inputClass}" type="time" value="${esc(time)}" aria-label="Horário disponível"><button class="btn out sm ${removeClass}" type="button" aria-label="Remover horário">Remover</button></div>`).join('');
+}
+
 function weeklyScheduleEditor(schedule = {}) {
   return DAYS.map((day, index) => {
     const settings = schedule[String(index)] || {};
-    return `<div class="week-row" data-day="${index}"><label class="week-day"><input class="week-active" type="checkbox" ${settings.active ? 'checked' : ''}> ${day}</label>
-      <label>Abre<input class="week-start" type="time" value="${esc(settings.start || '09:00')}"></label>
-      <label>Fecha<input class="week-end" type="time" value="${esc(settings.end || '17:00')}"></label>
-      <label>Intervalo de<input class="week-break-start" type="time" value="${esc(settings.break_start || '')}"></label>
-      <label>Até<input class="week-break-end" type="time" value="${esc(settings.break_end || '')}"></label>
-      <label>Duração<select class="week-duration">${[15, 20, 30, 40, 45, 50, 60, 90, 120].map((minutes) => `<option value="${minutes}" ${Number(settings.duration || 30) === minutes ? 'selected' : ''}>${minutes} min</option>`).join('')}</select></label></div>`;
+    const times = legacyScheduleTimes(settings);
+    return `<section class="week-row ${settings.active ? '' : 'is-inactive'}" data-day="${index}">
+      <label class="week-day"><input class="week-active" type="checkbox" ${settings.active ? 'checked' : ''}> ${day}</label>
+      <div class="week-hours"><div class="availability-times week-times">${timeEntriesMarkup(times, 'week-time', 'remove-week-time')}</div>
+      <button class="btn out sm add-week-time" type="button">Adicionar horário</button></div></section>`;
   }).join('');
+}
+
+function addAvailabilityTime(container, inputClass, removeClass, value = '') {
+  const item = document.createElement('div');
+  item.className = 'availability-time';
+  const input = document.createElement('input');
+  input.type = 'time';
+  input.className = inputClass;
+  input.value = value;
+  input.setAttribute('aria-label', 'Horário disponível');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = `btn out sm ${removeClass}`;
+  remove.textContent = 'Remover';
+  remove.setAttribute('aria-label', 'Remover horário');
+  remove.addEventListener('click', () => item.remove());
+  item.append(input, remove);
+  container.append(item);
+}
+
+function dateAfter(day, offset) {
+  const date = new Date(`${day}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function appointmentRange(view, anchor) {
+  if (view === 'month') {
+    const start = `${anchor.slice(0, 7)}-01`;
+    const year = Number(anchor.slice(0, 4)), month = Number(anchor.slice(5, 7));
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return { start, end: dateAfter(start, lastDay - 1) };
+  }
+  if (view === 'week') {
+    const date = new Date(`${anchor}T12:00:00Z`);
+    const mondayOffset = (date.getUTCDay() + 6) % 7;
+    const start = dateAfter(anchor, -mondayOffset);
+    return { start, end: dateAfter(start, 6) };
+  }
+  return { start: anchor, end: anchor };
+}
+
+function agendaReportMarkup(bookings, view, anchor) {
+  const range = appointmentRange(view, anchor);
+  const labels = { day: 'Dia', week: 'Semana', month: 'Mês' };
+  const rows = bookings.filter((booking) => booking.day >= range.start && booking.day <= range.end)
+    .sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`));
+  const printRows = rows.map((booking) => `<tr><td>${fd(booking.day)} ${esc(booking.hour)}</td><td>${esc(booking.title || 'Atendimento')}</td><td>${esc(booking.other_name || 'Cliente')}</td><td>${esc(booking.other_whatsapp || '—')}</td><td>${statusLabel(booking.status)}</td><td>${brl(booking.price)}</td></tr>`).join('');
+  return `<div class="box no-print"><h3>Agenda de atendimentos</h3><p class="muted">Escolha o período para consultar e imprimir seus atendimentos.</p><div class="agenda-filters"><label>Visualizar por<select id="agenda-view">${Object.entries(labels).map(([value, label]) => `<option value="${value}" ${view === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Data de referência<input id="agenda-date" type="date" value="${esc(anchor)}"></label><button class="btn" id="agenda-apply" type="button">Aplicar período</button><button class="btn out" id="agenda-print" type="button">Imprimir atendimentos</button></div></div>
+    <section class="box print-report"><div class="report-heading"><div><span class="eyebrow">CONECTAFEMME · AGENDA</span><h3>Atendimentos — ${labels[view].toLocaleLowerCase('pt-BR')}</h3><p>${fd(range.start)}${range.end !== range.start ? ` a ${fd(range.end)}` : ''}</p></div><strong>${rows.length} ${rows.length === 1 ? 'atendimento' : 'atendimentos'}</strong></div>
+    ${rows.length ? `<table><thead><tr><th>Data e hora</th><th>Serviço</th><th>Cliente</th><th>WhatsApp</th><th>Status</th><th>Valor</th></tr></thead><tbody>${printRows}</tbody></table>` : '<p class="muted">Nenhum atendimento neste período.</p>'}</section>`;
+}
+
+const PAYMENT_METHODS = { pix: 'Pix', dinheiro: 'Dinheiro', credito: 'Cartão de crédito', debito: 'Cartão de débito', transferencia: 'Transferência', outro: 'Outro' };
+
+function financeReportMarkup(payments, from, to) {
+  const rows = payments.filter((payment) => payment.paid_on >= from && payment.paid_on <= to)
+    .sort((a, b) => `${b.paid_on} ${b.created || ''}`.localeCompare(`${a.paid_on} ${a.created || ''}`));
+  const total = rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  return `<section class="box print-report"><div class="report-heading"><div><span class="eyebrow">CONECTAFEMME · FINANCEIRO</span><h3>Relatório de recebimentos</h3><p>${from ? fd(from) : '—'} a ${to ? fd(to) : '—'}</p></div><div class="report-total"><small>Total recebido</small><strong>${brl(total)}</strong><small>${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}</small></div></div>
+    ${rows.length ? `<table><thead><tr><th>Data</th><th>Cliente</th><th>Serviço / descrição</th><th>Forma</th><th>Valor</th><th>Observação</th></tr></thead><tbody>${rows.map((payment) => `<tr><td>${fd(payment.paid_on)}</td><td>${esc(payment.client_name || '—')}</td><td>${esc(payment.service_title || '—')}</td><td>${PAYMENT_METHODS[payment.payment_method] || 'Outro'}</td><td>${brl(payment.amount)}</td><td>${esc(payment.note || '—')}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nenhum recebimento no período selecionado.</p>'}</section>`;
+}
+
+function financeMarkup() {
+  const today = todayInBrazil();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  return `<div class="box no-print"><h3>Registrar recebimento</h3><p class="muted">Anote pagamentos recebidos por fora do ConectaFemme. Nenhum pagamento é processado por esta tela.</p>
+    <div class="finance-entry-grid"><label>Data<input id="payment-date" type="date" max="${today}" value="${today}" required></label><label>Valor recebido (R$)<input id="payment-amount" type="number" min="0.01" step="0.01" required></label><label>Forma de pagamento<select id="payment-method" required>${Object.entries(PAYMENT_METHODS).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>Cliente (opcional)<input id="payment-client" maxlength="120"></label><label>Serviço / descrição (opcional)<input id="payment-service" maxlength="160"></label><label>Observação (opcional)<input id="payment-note" maxlength="500"></label></div><br><button class="btn" id="payment-save" type="button">Registrar recebimento</button></div>
+    <div class="box no-print"><h3>Gerar relatório</h3><div class="finance-filters"><label>De<input id="finance-from" type="date" value="${monthStart}"></label><label>Até<input id="finance-to" type="date" value="${today}"></label><button class="btn" id="finance-filter" type="button">Atualizar relatório</button><button class="btn out" id="finance-print" type="button">Imprimir relatório</button></div></div><div id="finance-report"></div>`;
 }
 
 async function compressForUpload(file) {
@@ -468,7 +558,7 @@ function buildManualBookingForm(services, slots) {
     <div class="manual-booking-grid"><label>Serviço<select id="manual-service"><option value="">Escolha um serviço</option>${services.map((service) => `<option value="${service.id}">${esc(service.title)} · ${brl(service.price)}</option>`).join('')}</select></label>
       <label>Horário disponível<select id="manual-slot"><option value="">Escolha dia e horário</option>${available.map((slot) => `<option value="${slot.id}">${fd(slot.day)} · ${esc(slot.hour)}</option>`).join('')}</select></label>
       <label>Nome da cliente<input id="manual-name" maxlength="120" autocomplete="name"></label><label>WhatsApp da cliente<input id="manual-whatsapp" inputmode="tel" maxlength="30" placeholder="DDD + número" autocomplete="tel"></label></div>
-    <br><button class="btn" id="manual-save" ${!available.length || !services.length ? 'disabled' : ''}>Salvar agendamento</button>${!available.length ? '<p class="muted">Não há horários livres. Configure o expediente na aba Agenda.</p>' : ''}</div>`;
+    <br><button class="btn" id="manual-save" ${!available.length || !services.length ? 'disabled' : ''}>Salvar agendamento</button>${!available.length ? '<p class="muted">Não há horários livres. Configure o expediente na aba Expediente.</p>' : ''}</div>`;
 }
 
 async function painel(tab = 'ag') {
@@ -490,8 +580,9 @@ async function painel(tab = 'ag') {
     return;
   }
 
-  const [categories, me, publicProfile, slots] = await Promise.all([
+  const [categories, me, publicProfile, slots, payments] = await Promise.all([
     api('cats'), api('my_profile'), api('provider', null, `&id=${U.id}`), api('my_slots'),
+    tab === 'financeiro' ? api('payments') : Promise.resolve([]),
   ]);
   const services = publicProfile.services || [];
   const profileLink = publicProfileUrl(U.id);
@@ -504,13 +595,66 @@ async function painel(tab = 'ag') {
       <div class="profile-image-settings"><div class="profile-image-field"><label for="logo-file">Logo do profissional (imagem redonda)</label><input id="logo-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">Esta é a marca que aparece no círculo do perfil.</small><div class="profile-image-preview is-round" ${bg(me.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Prévia da logo"></div></div>
       <div class="profile-image-field"><label for="cover-file">Foto de apresentação (quadrada)</label><input id="cover-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">Opcional. Se não enviar outra imagem, a logo será usada. Fotos de serviços ficam apenas na aba Serviços.</small><div id="cover-preview" class="profile-image-preview is-square" ${bg(me.cover_image || me.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Prévia da imagem quadrada"></div><p id="cover-state" class="profile-image-state">${me.cover_image ? 'Imagem quadrada atual.' : 'A logo será usada na imagem quadrada.'}</p><button class="btn out sm" id="cover-use-logo" type="button">Usar a logo no quadrado</button></div></div>
       <label>Sobre você</label><textarea id="b" rows="4">${esc(me.bio)}</textarea><br><br><button class="btn" id="sp">Salvar perfil</button></div>`,
-    serv: `<div class="box"><h3>Novo serviço</h3><label>Título</label><input id="t" maxlength="160"><label>Descrição</label><textarea id="d" rows="3"></textarea><label>Valor (R$)</label><input id="pr" type="number" min="0" step="0.01" required><label>Fotos do serviço</label><input id="service-files" type="file" accept="image/jpeg,image/png,image/webp" multiple><small class="muted">Escolha até 4 imagens do dispositivo; imagens grandes são otimizadas antes do envio.</small><br><br><button class="btn" id="ss">Publicar serviço</button></div>${services.map((service) => `<div class="box"><b>${esc(service.title)}</b> — ${brl(service.price)} <button class="btn red sm" onclick="del('service_del',${service.id})">Excluir</button></div>`).join('')}`,
-    agenda: `<div class="box"><h3>Expediente semanal</h3><p class="muted">Marque os dias de atendimento, informe abertura, fechamento e intervalo. Vamos gerar horários disponíveis para os próximos 60 dias.</p><div class="week-schedule">${weeklyScheduleEditor(me.weekly_schedule || {})}</div><br><button class="btn" id="save-weekly">Salvar expediente e gerar horários</button></div>
-      <div class="box"><h3>Adicionar horários para uma data específica</h3><p class="muted">Use para abrir um horário extra sem alterar sua rotina semanal.</p><div class="manual-booking-grid"><label>Data<input id="extra-day" type="date" min="${todayInBrazil()}"></label><label>Início<input id="extra-start" type="time" value="09:00"></label><label>Fim<input id="extra-end" type="time" value="17:00"></label><label>Duração<select id="extra-duration">${[15,20,30,40,45,50,60,90,120].map((minutes) => `<option value="${minutes}" ${minutes === 30 ? 'selected' : ''}>${minutes} min</option>`).join('')}</select></label></div><br><button class="btn" id="add-extra">Gerar horários do dia</button></div>
-      <div class="box"><h3>Próximos horários</h3><div class="slots">${slots.filter((slot) => slot.available || slot.booked).map((slot) => `<button ${slot.booked ? 'class="on" disabled' : `onclick="del('slot_del',${slot.id})"`} title="${slot.booked ? 'Reservado' : 'Clique para remover'}">${fd(slot.day)} ${esc(slot.hour)}${slot.booked ? ' · Reservado' : ' · Remover'}</button>`).join('') || '<span class="muted">Nenhum horário nos próximos 60 dias. Configure seu expediente acima.</span>'}</div></div>`,
+    serv: `<div class="box" id="service-editor"><h3 id="service-form-heading">Adicionar serviço</h3><input id="service-edit-id" type="hidden"><label for="t">Título</label><input id="t" maxlength="160"><label for="d">Descrição</label><textarea id="d" rows="3"></textarea><label for="pr">Valor (R$)</label><input id="pr" type="number" min="0" step="0.01" required><label for="service-files">Fotos do serviço</label><input id="service-files" type="file" accept="image/jpeg,image/png,image/webp" multiple><small id="service-image-help" class="muted">Escolha até 4 imagens do dispositivo; imagens grandes são otimizadas antes do envio.</small><br><br><button class="btn" id="ss">Publicar serviço</button> <button class="btn out" id="cancel-service-edit" type="button" hidden>Cancelar edição</button></div>${services.map((service) => `<div class="box service-management-card"><div><b>${esc(service.title)}</b> — ${brl(service.price)}</div><div class="profile-actions"><button class="btn out sm" type="button" onclick="editService(${service.id})">Editar</button><button class="btn red sm" type="button" onclick="del('service_del',${service.id})">Excluir</button></div></div>`).join('')}`,
+    expediente: `<div class="box"><h3>Expediente semanal</h3><p class="muted">Selecione os dias em que atende e cadastre manualmente cada horário disponível. Você pode editar os horários quando sua disponibilidade mudar.</p><div class="week-schedule">${weeklyScheduleEditor(me.weekly_schedule || {})}</div><br><button class="btn" id="save-weekly">Salvar expediente</button></div>
+      <div class="box"><h3>Horários extras para uma data</h3><p class="muted">Adicione disponibilidades avulsas sem alterar seu expediente semanal.</p><div class="manual-booking-grid"><label>Data<input id="extra-day" type="date" min="${todayInBrazil()}"></label><div><label>Horários disponíveis</label><div id="extra-times" class="availability-times"></div><button class="btn out sm" id="extra-time-add" type="button">Adicionar horário</button></div></div><br><button class="btn" id="add-extra">Salvar horários extras</button></div>
+      <div class="box"><h3>Disponibilidades futuras</h3><div class="slots">${slots.filter((slot) => slot.available || slot.booked).map((slot) => `<button ${slot.booked ? 'class="on" disabled' : `onclick="del('slot_del',${slot.id})"`} title="${slot.booked ? 'Reservado' : 'Clique para remover'}">${fd(slot.day)} ${esc(slot.hour)}${slot.booked ? ' · Reservado' : ' · Remover'}</button>`).join('') || '<span class="muted">Nenhum horário futuro. Configure o expediente acima.</span>'}</div></div>`,
+    agenda: agendaReportMarkup(bookings, window._agendaSelection?.view || 'day', window._agendaSelection?.date || todayInBrazil()),
+    financeiro: financeMarkup(),
   };
-  app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['agenda','Expediente e agenda']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab]}`;
+  app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs no-print">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['expediente','Expediente'],['agenda','Agenda'],['financeiro','Financeiro']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab] || tabs.ag}`;
   const on = (selector, handler) => { if ($(selector)) $(selector).onclick = handler; };
+
+  if (tab === 'expediente') {
+    document.querySelectorAll('.add-week-time').forEach((button) => button.addEventListener('click', () => addAvailabilityTime(button.closest('.week-hours').querySelector('.week-times'), 'week-time', 'remove-week-time')));
+    document.querySelectorAll('.week-row').forEach((row) => {
+      const checkbox = row.querySelector('.week-active');
+      const updateState = () => {
+        row.classList.toggle('is-inactive', !checkbox.checked);
+        row.querySelectorAll('.week-time, .remove-week-time, .add-week-time').forEach((control) => { control.disabled = !checkbox.checked; });
+      };
+      checkbox.addEventListener('change', updateState);
+      updateState();
+    });
+    const extraTimes = $('#extra-times');
+    if (extraTimes) addAvailabilityTime(extraTimes, 'extra-time', 'remove-extra-time');
+    on('#extra-time-add', () => addAvailabilityTime(extraTimes, 'extra-time', 'remove-extra-time'));
+  }
+
+  if (tab === 'serv') {
+    window._providerServices = services;
+    on('#cancel-service-edit', () => window.cancelServiceEdit());
+  }
+
+  if (tab === 'agenda') {
+    on('#agenda-apply', () => {
+      const date = $('#agenda-date').value;
+      if (!date) return alert('Escolha uma data para consultar a agenda.');
+      window._agendaSelection = { view: $('#agenda-view').value, date };
+      painel('agenda');
+    });
+    on('#agenda-print', () => window.print());
+  }
+
+  if (tab === 'financeiro') {
+    const drawReport = () => {
+      const from = $('#finance-from').value;
+      const to = $('#finance-to').value;
+      if (!from || !to || from > to) return alert('Confira as datas do relatório.');
+      $('#finance-report').innerHTML = financeReportMarkup(payments, from, to);
+    };
+    drawReport();
+    on('#finance-filter', drawReport);
+    on('#finance-print', () => window.print());
+    on('#payment-save', async () => {
+      const amount = Number($('#payment-amount').value);
+      const paidOn = $('#payment-date').value;
+      if (!paidOn || !Number.isFinite(amount) || amount <= 0) return alert('Informe uma data e um valor recebido válido.');
+      await api('payment_add', { paid_on: paidOn, amount, payment_method: $('#payment-method').value, client_name: $('#payment-client').value, service_title: $('#payment-service').value, note: $('#payment-note').value });
+      alert('Recebimento registrado.');
+      painel('financeiro');
+    });
+  }
 
   let useLogoAsCover = false;
   if (tab === 'perfil') {
@@ -546,7 +690,9 @@ async function painel(tab = 'ag') {
     if (files.length > 4) return alert('Escolha no máximo 4 imagens por serviço.');
     const images = [];
     for (const file of files) images.push((await uploadSelected(file, 'service')).url);
-    await api('service_save', { title: $('#t').value, descr: $('#d').value, price: $('#pr').value, images });
+    const editId = $('#service-edit-id').value;
+    await api('service_save', { id: editId || undefined, title: $('#t').value, descr: $('#d').value, price: $('#pr').value, images });
+    alert(editId ? 'Serviço atualizado.' : 'Serviço publicado.');
     painel('serv');
   });
   on('#save-weekly', async () => {
@@ -554,21 +700,20 @@ async function painel(tab = 'ag') {
     document.querySelectorAll('.week-row').forEach((row) => {
       schedule[row.dataset.day] = {
         active: row.querySelector('.week-active').checked,
-        start: row.querySelector('.week-start').value,
-        end: row.querySelector('.week-end').value,
-        break_start: row.querySelector('.week-break-start').value,
-        break_end: row.querySelector('.week-break-end').value,
-        duration: Number(row.querySelector('.week-duration').value),
+        times: [...row.querySelectorAll('.week-time')].map((input) => input.value).filter(Boolean),
       };
     });
     await api('schedule_save', { schedule });
-    alert('Expediente salvo. Os horários disponíveis dos próximos 60 dias foram atualizados.');
-    painel('agenda');
+    alert('Expediente salvo e horários recorrentes atualizados para os próximos 60 dias.');
+    painel('expediente');
   });
   on('#add-extra', async () => {
-    await api('slot_generate', { day: $('#extra-day').value, start: $('#extra-start').value, end: $('#extra-end').value, duration: Number($('#extra-duration').value) });
-    alert('Horários adicionados à agenda.');
-    painel('agenda');
+    const day = $('#extra-day').value;
+    const hours = [...document.querySelectorAll('.extra-time')].map((input) => input.value).filter(Boolean);
+    if (!day || !hours.length) return alert('Escolha uma data e informe pelo menos um horário.');
+    await api('slot_add', { day, hours });
+    alert('Horários extras adicionados à agenda.');
+    painel('expediente');
   });
   on('#manual-save', async () => {
     await api('manual_book', { slot_id: $('#manual-slot').value, service_id: $('#manual-service').value, name: $('#manual-name').value, whatsapp: $('#manual-whatsapp').value });
@@ -579,6 +724,31 @@ async function painel(tab = 'ag') {
 }
 window.painel = painel;
 window.del = async (action, id) => { await api(action, { id }); painel(window._tab); };
+window.editService = (id) => {
+  const service = (window._providerServices || []).find((item) => Number(item.id) === Number(id));
+  if (!service) return alert('Não foi possível localizar este serviço. Atualize a tela e tente novamente.');
+  $('#service-edit-id').value = service.id;
+  $('#t').value = service.title || '';
+  $('#d').value = service.descr || '';
+  $('#pr').value = service.price ?? '';
+  $('#service-files').value = '';
+  $('#service-form-heading').textContent = 'Editar serviço';
+  $('#service-image-help').textContent = 'Se não escolher novas fotos, as imagens atuais serão mantidas.';
+  $('#ss').textContent = 'Salvar alterações';
+  $('#cancel-service-edit').hidden = false;
+  $('#service-editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+window.cancelServiceEdit = () => {
+  $('#service-edit-id').value = '';
+  $('#t').value = '';
+  $('#d').value = '';
+  $('#pr').value = '';
+  $('#service-files').value = '';
+  $('#service-form-heading').textContent = 'Adicionar serviço';
+  $('#service-image-help').textContent = 'Escolha até 4 imagens do dispositivo; imagens grandes são otimizadas antes do envio.';
+  $('#ss').textContent = 'Publicar serviço';
+  $('#cancel-service-edit').hidden = true;
+};
 
 function adminDashboardMarkup(users, clients, professionals) {
   const format = (value) => new Intl.NumberFormat('pt-BR').format(value);

@@ -22,7 +22,8 @@ O seletor de tema oferece modo claro/escuro, lembra a escolha neste navegador e 
 
 ## Agenda e perfil profissional
 
-- O profissional pode configurar o expediente por dia da semana, com abertura, fechamento, intervalo e duração da consulta. O sistema publica horários para os próximos 60 dias; também é possível abrir horários extras em uma data específica.
+- O profissional escolhe os dias da semana e cadastra manualmente os horários disponíveis de cada dia; pode editá-los depois. As disponibilidades recorrentes são atualizadas para os próximos 60 dias, e horários avulsos podem ser incluídos por data. Expediente e agenda são áreas separadas; a agenda pode ser filtrada e impressa por dia, semana ou mês.
+- A aba Financeiro permite registrar recebimentos manuais, informar a forma de pagamento e gerar/imprimir relatórios por período; ela não processa pagamentos.
 - O painel oferece um link público individual para compartilhar com clientes e permite exibir o perfil do Instagram.
 - Fotos de perfil e de serviços são selecionadas como arquivos JPG, PNG ou WebP. O navegador otimiza imagens grandes; a Edge Function autentica o profissional e grava os arquivos no bucket público `conectaelas-images`.
 - O profissional pode registrar na agenda um atendimento combinado por telefone, WhatsApp ou presencialmente, com serviço, horário e contato da cliente.
