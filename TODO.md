@@ -17,3 +17,4 @@
 
 - [x] **Expediente compacto:** reduzir a altura do seletor de horários em telas de computador; exibir os horários futuros em uma seção discreta e expansível, agrupada por data, com remoção acessível somente dos horários ainda não reservados.
 - [x] **Busca inicial:** manter o título e o texto de apoio existentes; tornar a área de busca mais compacta e atraente como primeira seção do site; garantir texto do botão de busca com contraste legível no modo claro e também no modo escuro.
+- [x] **Cabeçalho da marca:** apresentar o símbolo feminino ao lado do nome Conecta Femme, ambos legíveis no canto superior esquerdo; manter cabeçalho próximo de 85–100 px no desktop; usar fundos claro e escuro conforme o tema, preservando as cores da marca.

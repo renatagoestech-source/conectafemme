@@ -1,4 +1,4 @@
-const CACHE_NAME = 'conectafemme-shell-v10';
+const CACHE_NAME = 'conectafemme-shell-v11';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -10,6 +10,7 @@ const APP_SHELL = [
   '/app.js',
   '/supabase-config.js',
   '/assets/conectafemme-logo.png',
+  '/assets/conectaelas-mark.png',
   '/assets/pwa-icon-192.png',
   '/assets/pwa-icon-512.png'
 ];
