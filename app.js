@@ -234,7 +234,7 @@ async function home() {
     ['Unhas', '✧'], ['Cabelos', '⌁'], ['Maquiagem', '✦'], ['Cílios', '◌'], ['Sobrancelhas', '⌒'], ['Estética', '✿']
   ];
   app.innerHTML = `<section class="hero search-hero"><div class="search-copy"><span class="eyebrow">DESCUBRA PROFISSIONAIS</span><h1>Sua beleza começa com a escolha certa.</h1><p>Encontre profissionais de confiança, veja seus serviços e escolha quem combina com você.</p></div>
-    <div class="bar"><label class="sr-only" for="q">Buscar serviço ou profissional</label><input id="q" placeholder="Buscar serviço ou profissional...">
+    <div class="bar" role="search" aria-label="Filtros para encontrar profissionais"><label class="sr-only" for="q">Buscar serviço ou profissional</label><input id="q" placeholder="Buscar serviço ou profissional...">
       <select id="cat"><option value="">Todas as categorias</option>${categories.map((category) => `<option>${esc(category)}</option>`).join('')}</select>
       <select id="state" aria-label="Estado"><option value="">Todos os estados</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select>
       <input id="city" placeholder="Cidade" aria-label="Cidade">
