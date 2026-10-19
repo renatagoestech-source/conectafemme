@@ -5,7 +5,7 @@
 - **Movimento:** beleza contemporânea com editorial feminino, inspirada diretamente na marca fornecida.
 - **Princípios:** preservar o símbolo original; aplicar vinho e nude já usados pelo produto; manter contraste e legibilidade nos dois temas; identificar claramente todo conteúdo fictício.
 - **Paleta:** vinho `#7B1E3A`, rosé `#A8506A`, nude `#B88B74`; no modo escuro, superfícies ameixa profundas e texto claro.
-- **Layout e interação:** marca horizontal no cabeçalho com o símbolo e o slogan em texto acessível; controle de tema sempre disponível na navegação; modo escolhido persiste neste navegador.
+- **Layout e interação:** marca horizontal no cabeçalho com o símbolo e o slogan em texto acessível; controle de tema sempre disponível na navegação; modo escolhido persiste neste navegador; cartões de profissionais sem foto/logo próprios usam um monograma discreto de duas iniciais em vez do logo da plataforma.
 - **Demonstrações:** perfis e serviços sintéticos, rotulados publicamente como demonstração; nenhum contato real, nenhum agendamento habilitado nesses perfis; aba administrativa separada para removê-los.
 - **Segurança administrativa:** criar um usuário administrador inicial no Supabase; guardar somente hash de senha no banco e não colocar credenciais no código.
 

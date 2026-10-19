@@ -441,6 +441,27 @@ nav { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
   nav { width: 100%; flex: 1 0 100%; justify-content: flex-end; gap: 8px; }
   nav a, nav button { font-size: .82rem; }
 }
+/* Fallback discreto para cartões de profissionais sem imagem própria. */
+.card .img.img-no-cover {
+  background: radial-gradient(circle at 78% 24%, color-mix(in srgb, var(--p) 18%, transparent), transparent 38%),
+    linear-gradient(135deg, var(--accent-soft), var(--surface));
+}
+.card .logo.logo-initials {
+  display: grid;
+  place-items: center;
+  bottom: 14px;
+  left: 13px;
+  background: linear-gradient(135deg, var(--p), #a8506a);
+  color: #fff;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.08rem;
+  font-weight: 750;
+  letter-spacing: .04em;
+}
+:root[data-theme="dark"] .card .logo.logo-initials {
+  background: linear-gradient(135deg, #a8506a, #7b1e3a);
+  color: #fff;
+}
 @media (max-width: 380px) {
   header { padding-inline: 12px; }
   .brand-symbol { width: 42px; height: 40px; max-width: 42px; max-height: 40px; }

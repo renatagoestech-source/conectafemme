@@ -137,6 +137,13 @@ const brl = (value) => Number(value).toLocaleString('pt-BR', { style: 'currency'
 const wa = (number, message) => `https://wa.me/55${String(number).replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
 const imgs = (value) => { try { return Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch { return []; } };
 const bg = (url) => url ? `style="background-image:url('${esc(url)}')"` : '';
+const professionalInitials = (value) => {
+  const words = String(value ?? '').trim().split(/\s+/).filter(Boolean);
+  const meaningful = words.filter((word, index) => index === 0 || !/^(da|das|de|do|dos|e)$/i.test(word));
+  const first = Array.from(meaningful[0] || words[0] || 'C');
+  const last = meaningful.length > 1 ? Array.from(meaningful[meaningful.length - 1])[0] : first[1];
+  return esc(`${first[0] || 'C'}${last || 'F'}`.toLocaleUpperCase('pt-BR'));
+};
 const fd = (date) => date ? date.split('-').reverse().join('/') : '';
 const DAYS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const ratingSummary = (average, count) => count ? `<span class="rating-summary" title="${count} avaliação${count === 1 ? '' : 'ões'}">★ ${Number(average).toFixed(1)} <small>(${count})</small></span>` : '<span class="muted rating-summary">Sem avaliações</span>';
@@ -248,8 +255,15 @@ async function home() {
     const query = `&q=${encodeURIComponent($('#q').value)}&cat=${encodeURIComponent($('#cat').value)}&state=${encodeURIComponent($('#state').value)}&city=${encodeURIComponent($('#city').value)}&max_price=${encodeURIComponent($('#max-price').value)}&sort=${encodeURIComponent($('#sort').value)}`;
     const providers = await api('providers', null, query);
     $('#results-count').textContent = `${providers.length} profissional${providers.length === 1 ? '' : 'is'} encontrado${providers.length === 1 ? '' : 's'}`;
-    $('#list').innerHTML = providers.length ? providers.map((professional) => { const cover = professional.cover_image || professional.logo || 'assets/conectafemme-logo.png'; return `<a class="card" href="#/p/${professional.id}">
-      <div class="img" ${bg(cover)}><div class="logo" ${bg(professional.logo || cover)}></div></div>
+    $('#list').innerHTML = providers.length ? providers.map((professional) => {
+      const cover = professional.cover_image || '';
+      const avatar = professional.logo || professional.cover_image || '';
+      const initials = professionalInitials(professional.name);
+      const logoMarkup = avatar
+        ? `<div class="logo" ${bg(avatar)} role="img" aria-label="Imagem de ${esc(professional.name)}"></div>`
+        : `<div class="logo logo-initials" aria-hidden="true">${initials}</div>`;
+      return `<a class="card" href="#/p/${professional.id}">
+      <div class="img ${cover ? '' : 'img-no-cover'}" ${bg(cover)}>${logoMarkup}</div>
       <div class="info"><b>${esc(professional.name)}</b> ${professional.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}${professional.is_founder ? '<span class="founder-badge compact">✦ Fundador</span>' : ''}<br>${specialtyTags(professional)}<div class="muted">${esc([professional.city, professional.state].filter(Boolean).join(' · '))}</div>${ratingSummary(professional.rating_avg, professional.review_count)}
       ${professional.min_price != null ? `<div>a partir de <span class="price">${brl(professional.min_price)}</span></div>` : '<div class="muted">Consulte os serviços</div>'}<span class="card-link btn sm">Ver perfil <span aria-hidden="true">→</span></span></div></a>`; }).join('') : '<p class="muted">Nenhum profissional encontrado. Tente ampliar o preço máximo ou alterar a categoria.</p>';
   };
