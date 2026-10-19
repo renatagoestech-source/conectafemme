@@ -135,6 +135,13 @@ function timeToMinutes(value: unknown) {
   return hour * 60 + minute;
 }
 
+function validISODate(value: unknown) {
+  const text = String(value ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const date = new Date(`${text}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === text;
+}
+
 function makeHours(start: unknown, end: unknown, duration: unknown, breakStart?: unknown, breakEnd?: unknown) {
   const from = timeToMinutes(start), until = timeToMinutes(end), length = Number(duration);
   if (from === null || until === null || from >= until || !Number.isInteger(length) || length < 15 || length > 240)
@@ -309,11 +316,26 @@ async function handle(req: Request) {
     }
     case "service_save": {
       const me = await auth(req, ["provider"]);
-      const title = bodyString(input,"title"), price = Number(input.price);
-      if (!title || String(input.price ?? "").trim() === "" || !Number.isFinite(price) || price < 0) fail(400, "Informe título e valor válido.");
+      const title = bodyString(input,"title"), price = Number(input.price), descr = bodyString(input,"descr");
+      if (!title || title.length > 160 || String(input.price ?? "").trim() === "" || !Number.isFinite(price) || price < 0) fail(400, "Informe título e valor válido.");
+      if (descr.length > 4000) fail(400, "A descrição do serviço deve ter no máximo 4.000 caracteres.");
       const images = (Array.isArray(input.images) ? input.images : String(input.images ?? "").split("\n"))
         .map((image: unknown) => String(image).trim()).filter((image: string) => /^https:\/\//.test(image)).slice(0, 4);
-      await post("services", { provider_id: me.id, title, descr: bodyString(input,"descr"), price, images: JSON.stringify(images) });
+      if (input.id !== undefined && input.id !== null && String(input.id).trim()) {
+        const id = Number(input.id);
+        if (!Number.isSafeInteger(id) || id < 1) fail(400, "Serviço inválido.");
+        const existing = first(await get("services", { select: "id,images", id: idFilter(id), provider_id: idFilter(me.id), limit: "1" }));
+        if (!existing) fail(404, "Serviço não encontrado.");
+        let savedImages: any = images;
+        if (!images.length) {
+          try { savedImages = Array.isArray(existing.images) ? existing.images : JSON.parse(String(existing.images || "[]")); }
+          catch { savedImages = []; }
+        }
+        if (!Array.isArray(savedImages)) savedImages = [];
+        await patch("services", { id: idFilter(id), provider_id: idFilter(me.id) }, { title, descr, price, images: JSON.stringify(savedImages.slice(0, 4)) });
+      } else {
+        await post("services", { provider_id: me.id, title, descr, price, images: JSON.stringify(images) });
+      }
       return { ok: 1 };
     }
     case "service_del": {
@@ -328,15 +350,11 @@ async function handle(req: Request) {
       for (let day = 0; day < 7; day++) {
         const entry = supplied[String(day)] ?? {};
         const active = Boolean(entry.active);
-        if (active) {
-          const hours = makeHours(entry.start, entry.end, entry.duration, entry.break_start, entry.break_end);
-          if (!hours.length) fail(400, `Não há horários que caibam no expediente de ${["domingo","segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado"][day]}.`);
-        }
-        schedule[String(day)] = {
-          active,
-          start: String(entry.start ?? "09:00"), end: String(entry.end ?? "17:00"),
-          break_start: String(entry.break_start ?? ""), break_end: String(entry.break_end ?? ""), duration: Number(entry.duration ?? 30),
-        };
+        const suppliedTimes: unknown[] = Array.isArray(entry.times) ? entry.times : [];
+        const times: string[] = [...new Set<string>(suppliedTimes.map((value) => String(value).trim()))].sort();
+        if (times.some((hour: string) => timeToMinutes(hour) === null)) fail(400, `Informe horários válidos para ${["domingo","segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado"][day]}.`);
+        if (active && !times.length) fail(400, `Adicione ao menos um horário para ${["domingo","segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado"][day]}.`);
+        schedule[String(day)] = { active, times };
       }
       await patch("providers", { user_id: idFilter(me.id) }, { weekly_schedule: schedule });
       const now = saoPauloNow(), firstDay = new Date(`${now.day}T12:00:00Z`), rows: Record<string, unknown>[] = [];
@@ -344,8 +362,7 @@ async function handle(req: Request) {
         const date = new Date(firstDay.getTime() + offset * 86400000), day = date.toISOString().slice(0, 10);
         const entry = schedule[String(date.getUTCDay())];
         if (!entry.active) continue;
-        const hours = makeHours(entry.start, entry.end, entry.duration, entry.break_start, entry.break_end);
-        for (const hour of hours) {
+        for (const hour of entry.times) {
           const minute = timeToMinutes(hour)!;
           if (day === now.day && minute <= now.minutes) continue;
           rows.push({ provider_id: me.id, day, hour, available: true, schedule_managed: true });
@@ -357,7 +374,7 @@ async function handle(req: Request) {
     }
     case "slot_generate": {
       const me = await auth(req, ["provider"]), day = bodyString(input, "day"), now = saoPauloNow();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < now.day) fail(400, "Escolha uma data de hoje em diante.");
+      if (!validISODate(day) || day < now.day) fail(400, "Escolha uma data de hoje em diante.");
       const hours = makeHours(input.start, input.end, input.duration);
       const futureHours = hours.filter((hour) => day !== now.day || timeToMinutes(hour)! > now.minutes);
       if (!futureHours.length) fail(400, "Não há horários futuros nesse intervalo.");
@@ -365,14 +382,15 @@ async function handle(req: Request) {
       return { ok: 1, generated: futureHours.length };
     }
     case "slot_add": {
-      const me = await auth(req, ["provider"]), day = bodyString(input,"day");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) fail(400, "Informe uma data válida.");
-      for (const raw of Array.isArray(input.hours) ? input.hours : []) {
-        const hour = String(raw).trim();
-        if (/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(hour))
-          await db("slots", "POST", { on_conflict: "provider_id,day,hour" }, { provider_id: me.id, day, hour, available: true, schedule_managed: false }, "resolution=merge-duplicates,return=minimal");
-      }
-      return { ok: 1 };
+      const me = await auth(req, ["provider"]), day = bodyString(input,"day"), now = saoPauloNow();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < now.day) fail(400, "Escolha uma data de hoje em diante.");
+      const rawHours: unknown[] = Array.isArray(input.hours) ? input.hours : [];
+      const hours: string[] = [...new Set<string>(rawHours.map((value) => String(value).trim()))].sort();
+      if (!hours.length || hours.some((hour) => timeToMinutes(hour) === null)) fail(400, "Informe ao menos um horário válido.");
+      const futureHours = hours.filter((hour) => day !== now.day || timeToMinutes(hour)! > now.minutes);
+      if (!futureHours.length) fail(400, "Não há horários futuros nessa data.");
+      await upsertSlots(futureHours.map((hour) => ({ provider_id: me.id, day, hour, available: true, schedule_managed: false })));
+      return { ok: 1, generated: futureHours.length };
     }
     case "my_slots": {
       const me = await auth(req, ["provider"]), today = saoPauloNow().day;
@@ -410,6 +428,23 @@ async function handle(req: Request) {
       const updated = await patch("slots", { id: idFilter(sl.id), provider_id: idFilter(me.id), booked: "eq.false", available: "eq.true" }, { booked: true });
       if (!updated.length) fail(400, "Esse horário acabou de ser reservado.");
       await post("bookings", { slot_id: sl.id, service_id: sv.id, client_id: null, provider_id: me.id, manual_client_name: name, manual_client_whatsapp: whatsapp });
+      return { ok: 1 };
+    }
+    case "payments": {
+      const me = await auth(req, ["provider"]);
+      return await get("provider_payments", { select: "id,client_name,service_title,amount,payment_method,paid_on,note,created", provider_id: idFilter(me.id), order: "paid_on.desc,created.desc", limit: "1000" });
+    }
+    case "payment_add": {
+      const me = await auth(req, ["provider"]);
+      const amount = Number(input.amount), paidOn = bodyString(input, "paid_on") || saoPauloNow().day;
+      const method = bodyString(input, "payment_method");
+      const validMethods = ["pix", "dinheiro", "credito", "debito", "transferencia", "outro"];
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) fail(400, "Informe um valor recebido válido.");
+      if (!validISODate(paidOn) || paidOn > saoPauloNow().day) fail(400, "Informe uma data de recebimento válida.");
+      if (!validMethods.includes(method)) fail(400, "Selecione uma forma de pagamento válida.");
+      const clientName = bodyString(input, "client_name"), serviceTitle = bodyString(input, "service_title"), note = bodyString(input, "note");
+      if (clientName.length > 120 || serviceTitle.length > 160 || note.length > 500) fail(400, "Confira o tamanho dos campos do lançamento.");
+      await post("provider_payments", { provider_id: me.id, client_name: clientName, service_title: serviceTitle, amount, payment_method: method, paid_on: paidOn, note });
       return { ok: 1 };
     }
     case "bookings": {
