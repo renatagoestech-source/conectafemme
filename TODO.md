@@ -14,3 +14,5 @@
 - [ ] **Edição de serviços:** para cada serviço já cadastrado, oferecer ação de editar seus dados, salvar as alterações e preservar as imagens existentes se não forem substituídas.
 - [ ] **Expediente separado da agenda e impressão:** apresentar expediente e agenda em abas distintas; na agenda, permitir selecionar atendimentos por dia, semana ou mês e imprimir a seleção.
 - [ ] **Financeiro interno do profissional:** adicionar aba privada para registrar recebimentos com valor, data e forma de pagamento; somente o profissional responsável pode consultar; os lançamentos não aparecem às clientes nem processam pagamentos; permitir gerar e imprimir relatório por período.
+
+- [x] **Expediente compacto:** reduzir a altura do seletor de horários em telas de computador; exibir os horários futuros em uma seção discreta e expansível, agrupada por data, com remoção acessível somente dos horários ainda não reservados.

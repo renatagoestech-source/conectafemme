@@ -429,7 +429,7 @@ function legacyScheduleTimes(settings) {
 }
 
 function timeEntriesMarkup(times, inputClass, removeClass) {
-  return times.map((time) => `<div class="availability-time"><input class="${inputClass}" type="time" value="${esc(time)}" aria-label="Horário disponível"><button class="btn out sm ${removeClass}" type="button" aria-label="Remover horário">Remover</button></div>`).join('');
+  return times.map((time) => `<div class="availability-time"><input class="${inputClass}" type="time" value="${esc(time)}" aria-label="Horário disponível"><button class="btn out sm ${removeClass}" type="button" title="Remover horário" aria-label="Remover horário"><span aria-hidden="true">×</span></button></div>`).join('');
 }
 
 function weeklyScheduleEditor(schedule = {}) {
@@ -437,10 +437,23 @@ function weeklyScheduleEditor(schedule = {}) {
     const settings = schedule[String(index)] || {};
     const times = legacyScheduleTimes(settings);
     return `<section class="week-row ${settings.active ? '' : 'is-inactive'}" data-day="${index}">
-      <label class="week-day"><input class="week-active" type="checkbox" ${settings.active ? 'checked' : ''}> ${day}</label>
+      <label class="week-day"><input class="week-active" type="checkbox" ${settings.active ? 'checked' : ''}> <span>${day}</span></label>
       <div class="week-hours"><div class="availability-times week-times">${timeEntriesMarkup(times, 'week-time', 'remove-week-time')}</div>
-      <button class="btn out sm add-week-time" type="button">Adicionar horário</button></div></section>`;
+      <button class="btn out sm add-week-time" type="button">+ Adicionar horário</button></div></section>`;
   }).join('');
+}
+
+function futureAvailabilityMarkup(slots) {
+  const upcoming = slots.filter((slot) => slot.available || slot.booked)
+    .sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`));
+  if (!upcoming.length) return '';
+  const byDay = new Map();
+  upcoming.forEach((slot) => {
+    if (!byDay.has(slot.day)) byDay.set(slot.day, []);
+    byDay.get(slot.day).push(slot);
+  });
+  const days = [...byDay.entries()].map(([day, daySlots]) => `<details class="availability-day"><summary><span>${fd(day)}</span><small>${daySlots.length} ${daySlots.length === 1 ? 'horário' : 'horários'}</small></summary><div class="availability-day-slots">${daySlots.map((slot) => `<span class="availability-slot ${slot.booked ? 'is-booked' : ''}"><b>${esc(slot.hour)}</b>${slot.booked ? '<small>Reservado</small>' : `<button class="availability-remove" type="button" title="Remover ${esc(slot.hour)} de ${fd(day)}" aria-label="Remover horário ${esc(slot.hour)} de ${fd(day)}" onclick="del('slot_del',${slot.id})"><span aria-hidden="true">×</span></button>`}</span>`).join('')}</div></details>`).join('');
+  return `<details class="box availability-manager no-print"><summary><span class="availability-manager-copy"><strong>Gerenciar horários futuros</strong><small>Consulte ou remova horários ainda não reservados.</small></span><span class="availability-manager-count">${upcoming.length}</span></summary><div class="availability-days">${days}</div></details>`;
 }
 
 function addAvailabilityTime(container, inputClass, removeClass, value = '') {
@@ -454,7 +467,8 @@ function addAvailabilityTime(container, inputClass, removeClass, value = '') {
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = `btn out sm ${removeClass}`;
-  remove.textContent = 'Remover';
+  remove.innerHTML = '<span aria-hidden="true">×</span>';
+  remove.title = 'Remover horário';
   remove.setAttribute('aria-label', 'Remover horário');
   remove.addEventListener('click', () => item.remove());
   item.append(input, remove);
@@ -596,9 +610,9 @@ async function painel(tab = 'ag') {
       <div class="profile-image-field"><label for="cover-file">Foto de apresentação (quadrada)</label><input id="cover-file" type="file" accept="image/jpeg,image/png,image/webp"><small class="muted">Opcional. Se não enviar outra imagem, a logo será usada. Fotos de serviços ficam apenas na aba Serviços.</small><div id="cover-preview" class="profile-image-preview is-square" ${bg(me.cover_image || me.logo || 'assets/conectafemme-logo.png')} role="img" aria-label="Prévia da imagem quadrada"></div><p id="cover-state" class="profile-image-state">${me.cover_image ? 'Imagem quadrada atual.' : 'A logo será usada na imagem quadrada.'}</p><button class="btn out sm" id="cover-use-logo" type="button">Usar a logo no quadrado</button></div></div>
       <label>Sobre você</label><textarea id="b" rows="4">${esc(me.bio)}</textarea><br><br><button class="btn" id="sp">Salvar perfil</button></div>`,
     serv: `<div class="box" id="service-editor"><h3 id="service-form-heading">Adicionar serviço</h3><input id="service-edit-id" type="hidden"><label for="t">Título</label><input id="t" maxlength="160"><label for="d">Descrição</label><textarea id="d" rows="3"></textarea><label for="pr">Valor (R$)</label><input id="pr" type="number" min="0" step="0.01" required><label for="service-files">Fotos do serviço</label><input id="service-files" type="file" accept="image/jpeg,image/png,image/webp" multiple><small id="service-image-help" class="muted">Escolha até 4 imagens do dispositivo; imagens grandes são otimizadas antes do envio.</small><br><br><button class="btn" id="ss">Publicar serviço</button> <button class="btn out" id="cancel-service-edit" type="button" hidden>Cancelar edição</button></div>${services.map((service) => `<div class="box service-management-card"><div><b>${esc(service.title)}</b> — ${brl(service.price)}</div><div class="profile-actions"><button class="btn out sm" type="button" onclick="editService(${service.id})">Editar</button><button class="btn red sm" type="button" onclick="del('service_del',${service.id})">Excluir</button></div></div>`).join('')}`,
-    expediente: `<div class="box"><h3>Expediente semanal</h3><p class="muted">Selecione os dias em que atende e cadastre manualmente cada horário disponível. Você pode editar os horários quando sua disponibilidade mudar.</p><div class="week-schedule">${weeklyScheduleEditor(me.weekly_schedule || {})}</div><br><button class="btn" id="save-weekly">Salvar expediente</button></div>
+    expediente: `<div class="box"><h3>Expediente semanal</h3><p class="muted">Selecione os dias e inclua horários. Você pode editá-los quando quiser.</p><div class="week-schedule">${weeklyScheduleEditor(me.weekly_schedule || {})}</div><br><button class="btn" id="save-weekly">Salvar expediente</button></div>
       <div class="box"><h3>Horários extras para uma data</h3><p class="muted">Adicione disponibilidades avulsas sem alterar seu expediente semanal.</p><div class="manual-booking-grid"><label>Data<input id="extra-day" type="date" min="${todayInBrazil()}"></label><div><label>Horários disponíveis</label><div id="extra-times" class="availability-times"></div><button class="btn out sm" id="extra-time-add" type="button">Adicionar horário</button></div></div><br><button class="btn" id="add-extra">Salvar horários extras</button></div>
-      <div class="box"><h3>Disponibilidades futuras</h3><div class="slots">${slots.filter((slot) => slot.available || slot.booked).map((slot) => `<button ${slot.booked ? 'class="on" disabled' : `onclick="del('slot_del',${slot.id})"`} title="${slot.booked ? 'Reservado' : 'Clique para remover'}">${fd(slot.day)} ${esc(slot.hour)}${slot.booked ? ' · Reservado' : ' · Remover'}</button>`).join('') || '<span class="muted">Nenhum horário futuro. Configure o expediente acima.</span>'}</div></div>`,
+      ${futureAvailabilityMarkup(slots)}`,
     agenda: agendaReportMarkup(bookings, window._agendaSelection?.view || 'day', window._agendaSelection?.date || todayInBrazil()),
     financeiro: financeMarkup(),
   };
@@ -619,6 +633,7 @@ async function painel(tab = 'ag') {
     const extraTimes = $('#extra-times');
     if (extraTimes) addAvailabilityTime(extraTimes, 'extra-time', 'remove-extra-time');
     on('#extra-time-add', () => addAvailabilityTime(extraTimes, 'extra-time', 'remove-extra-time'));
+    document.querySelectorAll('.remove-week-time').forEach((button) => button.addEventListener('click', () => button.closest('.availability-time').remove()));
   }
 
   if (tab === 'serv') {
