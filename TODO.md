@@ -16,3 +16,4 @@
 - [ ] **Financeiro interno do profissional:** adicionar aba privada para registrar recebimentos com valor, data e forma de pagamento; somente o profissional responsável pode consultar; os lançamentos não aparecem às clientes nem processam pagamentos; permitir gerar e imprimir relatório por período.
 
 - [x] **Expediente compacto:** reduzir a altura do seletor de horários em telas de computador; exibir os horários futuros em uma seção discreta e expansível, agrupada por data, com remoção acessível somente dos horários ainda não reservados.
+- [x] **Busca inicial:** manter o título e o texto de apoio existentes; tornar a área de busca mais compacta e atraente como primeira seção do site; garantir texto do botão de busca com contraste legível no modo claro e também no modo escuro.
