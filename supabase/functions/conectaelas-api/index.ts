@@ -432,19 +432,23 @@ async function handle(req: Request) {
     }
     case "payments": {
       const me = await auth(req, ["provider"]);
-      return await get("provider_payments", { select: "id,client_name,service_title,amount,payment_method,paid_on,note,created", provider_id: idFilter(me.id), order: "paid_on.desc,created.desc", limit: "1000" });
+      const rows = await get("provider_payments", { select: "id,client_name,description,amount,method,paid_on,created_at", provider_id: idFilter(me.id), order: "paid_on.desc,created_at.desc", limit: "1000" });
+      const paymentMethods: Record<string, string> = { pix: "pix", dinheiro: "dinheiro", cartao_credito: "credito", cartao_debito: "debito", transferencia: "transferencia", outro: "outro" };
+      return rows.map((payment: any) => ({ ...payment, payment_method: paymentMethods[String(payment.method)] || "outro", created: payment.created_at }));
     }
     case "payment_add": {
       const me = await auth(req, ["provider"]);
       const amount = Number(input.amount), paidOn = bodyString(input, "paid_on") || saoPauloNow().day;
       const method = bodyString(input, "payment_method");
+      const paymentMethods: Record<string, string> = { pix: "pix", dinheiro: "dinheiro", credito: "cartao_credito", debito: "cartao_debito", transferencia: "transferencia", outro: "outro" };
+      const description = bodyString(input, "description") || bodyString(input, "service_title");
       const validMethods = ["pix", "dinheiro", "credito", "debito", "transferencia", "outro"];
-      if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) fail(400, "Informe um valor recebido válido.");
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 99999999.99) fail(400, "Informe um valor recebido válido.");
       if (!validISODate(paidOn) || paidOn > saoPauloNow().day) fail(400, "Informe uma data de recebimento válida.");
       if (!validMethods.includes(method)) fail(400, "Selecione uma forma de pagamento válida.");
-      const clientName = bodyString(input, "client_name"), serviceTitle = bodyString(input, "service_title"), note = bodyString(input, "note");
-      if (clientName.length > 120 || serviceTitle.length > 160 || note.length > 500) fail(400, "Confira o tamanho dos campos do lançamento.");
-      await post("provider_payments", { provider_id: me.id, client_name: clientName, service_title: serviceTitle, amount, payment_method: method, paid_on: paidOn, note });
+      const clientName = bodyString(input, "client_name");
+      if (clientName.length > 120 || description.length > 200) fail(400, "Confira o tamanho dos campos do lançamento.");
+      await post("provider_payments", { provider_id: me.id, client_name: clientName, description, amount, method: paymentMethods[method], paid_on: paidOn });
       return { ok: 1 };
     }
     case "bookings": {

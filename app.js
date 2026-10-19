@@ -501,14 +501,14 @@ function financeReportMarkup(payments, from, to) {
     .sort((a, b) => `${b.paid_on} ${b.created || ''}`.localeCompare(`${a.paid_on} ${a.created || ''}`));
   const total = rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   return `<section class="box print-report"><div class="report-heading"><div><span class="eyebrow">CONECTAFEMME · FINANCEIRO</span><h3>Relatório de recebimentos</h3><p>${from ? fd(from) : '—'} a ${to ? fd(to) : '—'}</p></div><div class="report-total"><small>Total recebido</small><strong>${brl(total)}</strong><small>${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}</small></div></div>
-    ${rows.length ? `<table><thead><tr><th>Data</th><th>Cliente</th><th>Serviço / descrição</th><th>Forma</th><th>Valor</th><th>Observação</th></tr></thead><tbody>${rows.map((payment) => `<tr><td>${fd(payment.paid_on)}</td><td>${esc(payment.client_name || '—')}</td><td>${esc(payment.service_title || '—')}</td><td>${PAYMENT_METHODS[payment.payment_method] || 'Outro'}</td><td>${brl(payment.amount)}</td><td>${esc(payment.note || '—')}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nenhum recebimento no período selecionado.</p>'}</section>`;
+    ${rows.length ? `<table><thead><tr><th>Data</th><th>Cliente</th><th>Descrição</th><th>Forma</th><th>Valor</th></tr></thead><tbody>${rows.map((payment) => `<tr><td>${fd(payment.paid_on)}</td><td>${esc(payment.client_name || '—')}</td><td>${esc(payment.description || '—')}</td><td>${PAYMENT_METHODS[payment.payment_method] || 'Outro'}</td><td>${brl(payment.amount)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nenhum recebimento no período selecionado.</p>'}</section>`;
 }
 
 function financeMarkup() {
   const today = todayInBrazil();
   const monthStart = `${today.slice(0, 7)}-01`;
   return `<div class="box no-print"><h3>Registrar recebimento</h3><p class="muted">Lançamentos privados para seu controle interno: somente você, como profissional, pode consultá-los; clientes não veem esses dados. Esta tela não processa pagamentos.</p>
-    <div class="finance-entry-grid"><label>Data<input id="payment-date" type="date" max="${today}" value="${today}" required></label><label>Valor recebido (R$)<input id="payment-amount" type="number" min="0.01" step="0.01" required></label><label>Forma de pagamento<select id="payment-method" required>${Object.entries(PAYMENT_METHODS).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>Cliente (opcional)<input id="payment-client" maxlength="120"></label><label>Serviço / descrição (opcional)<input id="payment-service" maxlength="160"></label><label>Observação (opcional)<input id="payment-note" maxlength="500"></label></div><br><button class="btn" id="payment-save" type="button">Registrar recebimento</button></div>
+    <div class="finance-entry-grid"><label>Data<input id="payment-date" type="date" max="${today}" value="${today}" required></label><label>Valor recebido (R$)<input id="payment-amount" type="number" min="0.01" step="0.01" required></label><label>Forma de pagamento<select id="payment-method" required>${Object.entries(PAYMENT_METHODS).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>Cliente (opcional)<input id="payment-client" maxlength="120"></label><label>Descrição (opcional)<input id="payment-description" maxlength="200" placeholder="Serviço ou referência interna"></label></div><br><button class="btn" id="payment-save" type="button">Registrar recebimento</button></div>
     <div class="box no-print"><h3>Gerar relatório</h3><div class="finance-filters"><label>De<input id="finance-from" type="date" value="${monthStart}"></label><label>Até<input id="finance-to" type="date" value="${today}"></label><button class="btn" id="finance-filter" type="button">Atualizar relatório</button><button class="btn out" id="finance-print" type="button">Imprimir relatório</button></div></div><div id="finance-report"></div>`;
 }
 
@@ -650,7 +650,7 @@ async function painel(tab = 'ag') {
       const amount = Number($('#payment-amount').value);
       const paidOn = $('#payment-date').value;
       if (!paidOn || !Number.isFinite(amount) || amount <= 0) return alert('Informe uma data e um valor recebido válido.');
-      await api('payment_add', { paid_on: paidOn, amount, payment_method: $('#payment-method').value, client_name: $('#payment-client').value, service_title: $('#payment-service').value, note: $('#payment-note').value });
+      await api('payment_add', { paid_on: paidOn, amount, payment_method: $('#payment-method').value, client_name: $('#payment-client').value, description: $('#payment-description').value });
       alert('Recebimento registrado.');
       painel('financeiro');
     });
