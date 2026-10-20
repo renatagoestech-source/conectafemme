@@ -360,8 +360,13 @@ async function provider(id) {
 function authForm(register) {
   let categoriesReady = Promise.resolve([]);
   app.innerHTML = `<div class="box auth"><h2>${register ? 'Criar conta' : 'Entrar'}</h2>
-    ${register ? `<label>Sou</label><select id="role"><option value="client">Cliente</option><option value="provider">Profissional / Estabelecimento</option></select><label>Nome</label><input id="name"><label>WhatsApp (com DDD)</label><input id="wa"><div id="client-location" class="client-location-fields"><h3>Localidade (opcional)</h3><p class="muted">Cidade e estado ajudam nas métricas agregadas da comunidade e não aparecem no seu perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-city" maxlength="80" autocomplete="address-level2"></label></div></div><div id="pf" hidden><div class="specialty-grid"><label>Especialidade principal<select id="cat1" required></select></label><label>Segunda especialidade (opcional)<select id="cat2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="city" autocomplete="address-level2"></label></div></div>` : ''}
-    <label>E-mail</label><input id="email" type="email"><label>Senha</label><input id="pw" type="password"><br><br><button class="btn" id="ok" style="width:100%">${register ? 'Cadastrar' : 'Entrar'}</button>
+    ${register ? `<label for="role">Sou</label><select id="role"><option value="client">Cliente</option><option value="provider">Profissional / Estabelecimento</option></select><label for="name">Nome</label><input id="name"><label for="wa">WhatsApp (com DDD)</label><input id="wa"><div id="client-location" class="client-location-fields"><h3>Localidade (opcional)</h3><p class="muted">Cidade e estado ajudam nas métricas agregadas da comunidade e não aparecem no seu perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-city" maxlength="80" autocomplete="address-level2"></label></div></div><div id="pf" hidden><div class="specialty-grid"><label>Especialidade principal<select id="cat1" required></select></label><label>Segunda especialidade (opcional)<select id="cat2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option>${state}</option>`).join('')}</select></label><label>Cidade<input id="city" autocomplete="address-level2"></label></div></div>
+    <fieldset class="legal-consents"><legend>Confirmações obrigatórias</legend>
+      <label class="legal-consent"><input id="accept-terms" type="checkbox"><span>Li e aceito os <a href="/termos.html#terms-title" target="_blank" rel="noopener noreferrer">Termos de Uso gerais</a>.</span></label>
+      <div id="provider-rules-consent" hidden><label class="legal-consent"><input id="accept-provider-rules" type="checkbox"><span>Li e aceito as <a href="/termos.html#regras-profissionais" target="_blank" rel="noopener noreferrer">Regras para Profissionais</a>.</span></label></div>
+      <small class="muted" id="consent-hint" aria-live="polite">Marque o aceite dos Termos de Uso para habilitar o cadastro.</small>
+    </fieldset>` : ''}
+    <label for="email">E-mail</label><input id="email" type="email"><label for="pw">Senha</label><input id="pw" type="password"><br><br><button class="btn" id="ok" style="width:100%" ${register ? 'disabled aria-describedby="consent-hint"' : ''}>${register ? 'Cadastrar' : 'Entrar'}</button>
     <p class="muted">${register ? 'Já tem conta? <a href="#/login">Entrar</a>' : 'Novo aqui? <a href="#/cadastro">Cadastre-se</a>'}</p></div>`;
   if (register) {
     categoriesReady = api('cats').then((categories) => {
@@ -372,17 +377,36 @@ function authForm(register) {
       console.error('Não foi possível carregar as especialidades:', error);
       return [];
     });
-    $('#role').onchange = (event) => {
-      const isProvider = event.target.value === 'provider';
+    const syncConsent = () => {
+      const isProvider = $('#role').value === 'provider';
       $('#pf').hidden = !isProvider;
       $('#client-location').hidden = isProvider;
+      $('#provider-rules-consent').hidden = !isProvider;
+      const accepted = $('#accept-terms').checked && (!isProvider || $('#accept-provider-rules').checked);
+      $('#ok').disabled = !accepted;
+      $('#consent-hint').textContent = accepted
+        ? 'Aceites registrados com a versão vigente dos documentos.'
+        : isProvider
+          ? 'Para continuar, aceite os Termos gerais e as Regras para Profissionais.'
+          : 'Marque o aceite dos Termos de Uso para habilitar o cadastro.';
     };
+    $('#role').onchange = syncConsent;
+    $('#accept-terms').onchange = syncConsent;
+    $('#accept-provider-rules').onchange = syncConsent;
   }
   $('#ok').onclick = async () => {
     const body = { email: $('#email').value, password: $('#pw').value };
     if (register) {
       const role = $('#role').value;
-      Object.assign(body, { role, name: $('#name').value, whatsapp: $('#wa').value });
+      if (!$('#accept-terms').checked) return alert('Leia e aceite os Termos de Uso para criar sua conta.');
+      if (role === 'provider' && !$('#accept-provider-rules').checked) return alert('Leia e aceite as Regras para Profissionais para continuar.');
+      Object.assign(body, {
+        role,
+        name: $('#name').value,
+        whatsapp: $('#wa').value,
+        accept_terms: true,
+        accept_provider_rules: role === 'provider' && $('#accept-provider-rules').checked,
+      });
       if (role === 'provider') {
         await categoriesReady;
         const primary = $('#cat1').value;

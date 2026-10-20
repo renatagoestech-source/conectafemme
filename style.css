@@ -462,6 +462,12 @@ nav { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
   background: linear-gradient(135deg, #a8506a, #7b1e3a);
   color: #fff;
 }
+.legal-consents { min-width: 0; margin: 18px 0 12px; padding: 12px 14px; border: 1px solid var(--b); border-radius: 12px; }
+.legal-consents legend { padding: 0 5px; color: var(--t); font-size: .86rem; font-weight: 700; }
+.legal-consent { display: flex; align-items: flex-start; gap: 10px; margin: 9px 0; color: var(--t); font-size: .88rem; line-height: 1.5; }
+.legal-consent input[type="checkbox"] { flex: 0 0 18px; width: 18px; min-height: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: var(--p); cursor: pointer; }
+.legal-consent a { color: var(--p); font-weight: 700; text-underline-offset: 3px; }
+.legal-consents > small { display: block; margin-top: 8px; line-height: 1.45; }
 @media (max-width: 380px) {
   header { padding-inline: 12px; }
   .brand-symbol { width: 42px; height: 40px; max-width: 42px; max-height: 40px; }
