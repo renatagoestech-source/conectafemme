@@ -19,3 +19,7 @@
 - [x] **Busca inicial:** manter o título e o texto de apoio existentes; tornar a área de busca mais compacta e atraente como primeira seção do site; garantir texto do botão de busca com contraste legível no modo claro e também no modo escuro.
 - [x] **Cabeçalho da marca:** apresentar o símbolo feminino ao lado do nome Conecta Femme, ambos legíveis no canto superior esquerdo; manter cabeçalho próximo de 85–100 px no desktop; usar fundos claro e escuro conforme o tema, preservando as cores da marca.
 - [x] **Iniciais nos cartões sem imagem:** na página inicial, quando não houver foto de apresentação nem logo do profissional, exibir as duas iniciais do nome profissional/empresa em vez do logo do ConectaFemme; preservar as fotos e logos cadastradas.
+
+
+- [ ] **Termos gerais no cadastro:** clientes e profissionais devem marcar obrigatoriamente que leram e aceitam os Termos de Uso antes de criar conta; o link abre o documento completo sem perder os dados preenchidos; o backend rejeita cadastros sem aceite e registra versão e data/hora do documento aceito.
+- [ ] **Regras adicionais para profissionais:** ao escolher “Profissional / Estabelecimento”, mostrar um segundo aceite obrigatório das Regras para Profissionais; ocultá-lo para clientes; validar novamente no backend e guardar a versão e data/hora do aceite profissional junto ao aceite geral.

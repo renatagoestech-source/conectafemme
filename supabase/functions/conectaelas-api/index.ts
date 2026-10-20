@@ -7,6 +7,8 @@ const publishables = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}
 const PUBLIC_KEY = publishables.default ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const encoder = new TextEncoder();
 const FOUNDER_LIMIT = 20;
+const TERMS_VERSION = "2026-10-20-v1";
+const PROFESSIONAL_RULES_VERSION = "2026-10-20-v1";
 // A contagem começa com esta versão da campanha; perfis antigos não ocupam vagas.
 const FOUNDER_CAMPAIGN_STARTED_AT = "2026-10-17T17:15:00.000Z";
 
@@ -208,10 +210,22 @@ async function handle(req: Request) {
       const email = bodyString(input, "email").toLowerCase();
       const name = bodyString(input, "name"), password = String(input.password ?? ""), whatsapp = bodyString(input, "whatsapp");
       if (!name || !/^\S+@\S+\.\S+$/.test(email) || password.length < 6 || !whatsapp) fail(400, "Preencha nome, e-mail válido, WhatsApp e senha (mín. 6 caracteres).");
+      if (input.accept_terms !== true) fail(400, "Leia e aceite os Termos de Uso para criar sua conta.");
+      if (role === "provider" && input.accept_provider_rules !== true) fail(400, "Leia e aceite as Regras para Profissionais para continuar.");
       if (first(await get("users", { select: "id", email: `eq.${email}`, limit: "1" }))) fail(400, "E-mail já cadastrado");
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const pass = await hashPassword(password, toHex(salt));
       const u = first(await post("users", { role, name, email, pass, whatsapp }));
+      const acceptedAt = new Date().toISOString();
+      const acceptances = [{ user_id: u.id, document_key: "terms_of_use", document_version: TERMS_VERSION, accepted_at: acceptedAt }];
+      if (role === "provider") acceptances.push({ user_id: u.id, document_key: "professional_rules", document_version: PROFESSIONAL_RULES_VERSION, accepted_at: acceptedAt });
+      try {
+        await post("legal_acceptances", acceptances);
+      } catch (error) {
+        try { await del("users", { id: idFilter(u.id) }); }
+        catch (rollbackError) { console.error("Could not roll back user after failed legal acceptance write", rollbackError); }
+        throw error;
+      }
       if (role === "provider") {
         const founderCandidates = await get("users", {
           select: "id",

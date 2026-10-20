@@ -1,0 +1,33 @@
+body { background: var(--bg); color: var(--t); }
+.terms-header { min-height: 88px; }
+.terms-header nav { display: flex; gap: 18px; }
+.terms-header nav a { color: var(--t); text-decoration: none; }
+.terms-header nav a:hover { color: var(--p); }
+.terms-main { max-width: 900px; padding-top: clamp(28px, 5vw, 58px); }
+.terms-heading { margin: 0 0 24px; padding: clamp(22px, 4vw, 36px); border: 1px solid var(--b); border-radius: 22px; background: linear-gradient(135deg, var(--accent-pale, #fff8f6), var(--surface)); }
+.terms-kicker { color: var(--p); font-size: .72rem; font-weight: 750; letter-spacing: .13em; }
+.terms-heading h1 { margin: 8px 0; color: var(--p); font-family: 'Playfair Display', Georgia, serif; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.05; }
+.terms-lead { max-width: 690px; margin: 0; color: var(--m); }
+.terms-version { margin: 16px 0 0; color: var(--m); font-size: .8rem; }
+.terms-document { margin: 20px 0; padding: clamp(22px, 4vw, 36px); border: 1px solid var(--b); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); }
+.terms-document h2 { margin: 0 0 18px; color: var(--p); font-family: 'Playfair Display', Georgia, serif; font-size: clamp(1.45rem, 3vw, 1.9rem); }
+.terms-document h3 { margin: 0 0 8px; font-family: inherit; font-size: 1.02rem; }
+.terms-document p, .terms-document li { color: var(--t); line-height: 1.7; }
+.terms-document p { margin: 9px 0; }
+.terms-clause { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--b); }
+.terms-document a { color: var(--p); font-weight: 650; text-underline-offset: 3px; }
+.professional-rules { scroll-margin-top: calc(var(--header-height, 94px) + 16px); }
+.professional-rules > .terms-kicker { display: inline-block; margin-bottom: 8px; }
+.professional-rules ol { display: grid; gap: 12px; padding-left: 1.35rem; }
+.professional-rules li { padding-left: 5px; }
+.provider-declaration { margin-top: 24px !important; padding: 14px 16px; border-left: 3px solid var(--p); border-radius: 0 10px 10px 0; background: var(--p2); font-weight: 650; }
+.terms-backlink { margin-top: 22px !important; }
+.terms-note { max-width: 760px; margin: 24px auto; color: var(--m); font-size: .82rem; text-align: center; }
+@media (max-width: 640px) {
+  .terms-header { padding: 8px 4%; }
+  .terms-header nav { width: auto; flex: 0 0 auto; gap: 11px; }
+  .terms-header nav a { font-size: .82rem; }
+  .terms-main { padding: 22px 4% 40px; }
+  .terms-heading, .terms-document { border-radius: 16px; }
+}
+:root[data-theme="dark"] .terms-heading { background: linear-gradient(135deg, #2b1d25, var(--surface)); }

@@ -1,12 +1,14 @@
-const CACHE_NAME = 'conectafemme-shell-v13';
+const CACHE_NAME = 'conectafemme-shell-v14';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/conheca.html',
+  '/termos.html',
   '/manifest.webmanifest',
   '/style.css',
   '/admin-updates.css',
   '/conheca.css',
+  '/termos.css',
   '/app.js',
   '/supabase-config.js',
   '/assets/conectafemme-logo.png',
@@ -14,7 +16,7 @@ const APP_SHELL = [
   '/assets/pwa-icon-192.png',
   '/assets/pwa-icon-512.png'
 ];
-const STATIC_PATHS = new Set(APP_SHELL.filter((path) => path !== '/' && path !== '/index.html' && path !== '/conheca.html'));
+const STATIC_PATHS = new Set(APP_SHELL.filter((path) => path !== '/' && path !== '/index.html' && path !== '/conheca.html' && path !== '/termos.html'));
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
