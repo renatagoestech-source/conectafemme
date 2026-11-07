@@ -1,4 +1,4 @@
-const CACHE_NAME = 'conectafemme-shell-v14';
+const CACHE_NAME = 'conectafemme-shell-v15';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -65,15 +65,16 @@ self.addEventListener('fetch', (event) => {
 
   if (STATIC_PATHS.has(url.pathname)) {
     event.respondWith((async () => {
-      const cached = await caches.match(request);
-      const update = fetch(request).then(async (response) => {
+      try {
+        const response = await fetch(request, { cache: 'no-store' });
         if (response.ok) {
           const cache = await caches.open(CACHE_NAME);
           await cache.put(request, response.clone());
         }
         return response;
-      }).catch(() => null);
-      return cached || await update || new Response('', { status: 503 });
+      } catch {
+        return await caches.match(request) || new Response('', { status: 503 });
+      }
     })());
   }
 });

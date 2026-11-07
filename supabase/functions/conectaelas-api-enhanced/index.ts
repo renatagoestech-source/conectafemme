@@ -160,6 +160,9 @@ async function handle(req: Request) {
 
   const incomingUrl = new URL(req.url);
   const action = incomingUrl.searchParams.get("a") ?? "";
+  const rawProviderId = incomingUrl.searchParams.get("id") ?? "";
+  const providerId = rawProviderId.split("?")[0];
+  if (action === "provider" && !/^[1-9]\d*$/.test(providerId)) fail(404, "Não encontrado");
   const rawBody = ["GET", "HEAD"].includes(req.method) ? undefined : await req.text();
   let input: any = {};
   if (rawBody) {
@@ -185,6 +188,7 @@ async function handle(req: Request) {
 
   const upstreamUrl = new URL(API_URL);
   upstreamUrl.search = incomingUrl.search;
+  if (action === "provider") upstreamUrl.searchParams.set("id", providerId);
   const requestedCategory = action === "providers" ? incomingUrl.searchParams.get("cat") ?? "" : "";
   if (requestedCategory) upstreamUrl.searchParams.set("cat", "");
   const upstreamHeaders: Record<string, string> = { apikey: apiKey };
@@ -217,7 +221,7 @@ async function handle(req: Request) {
     data = withSpecialties(data, rows);
     if (requestedCategory) data = data.filter((record: any) => record.specialties.includes(requestedCategory));
   } else if (action === "provider" && data && typeof data === "object") {
-    const id = Number(incomingUrl.searchParams.get("id"));
+    const id = Number(providerId);
     data = withSpecialties([data], await providerRows([id]))[0];
   } else if (action === "my_profile" && data && typeof data === "object") {
     data = withSpecialties([data], await providerRows([tokenUserId(token)]))[0];
