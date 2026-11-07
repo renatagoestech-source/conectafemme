@@ -223,7 +223,8 @@ function nav() {
 
 function route() {
   nav();
-  const parts = location.hash.slice(2).split('/');
+  const hashRoute = location.hash.slice(2).split('?')[0];
+  const parts = hashRoute.split('/');
   ({ '': home, p: () => provider(parts[1]), login, cadastro, painel, admin }[parts[0]] || home)();
   scrollTo(0, 0);
 }
