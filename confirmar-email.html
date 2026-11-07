@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7c334b">
+  <title>Confirmar e-mail | ConectaFemme</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #34252a; background: #fffaf8; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    main { width: min(100%, 480px); padding: 36px; box-sizing: border-box; border: 1px solid #eadde0; border-radius: 18px; background: #fff; box-shadow: 0 16px 48px #4b263010; text-align: center; }
+    h1 { margin: 0 0 12px; color: #7c334b; font-family: Georgia, serif; font-size: 1.8rem; }
+    p { line-height: 1.6; }
+    #status { min-height: 3em; }
+    a { display: inline-block; margin-top: 16px; padding: 12px 20px; border-radius: 999px; background: #7c334b; color: #fff; text-decoration: none; font-weight: 650; }
+    a[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ConectaFemme</h1>
+    <p id="status" role="status" aria-live="polite">Validando seu link de confirmação…</p>
+    <a id="login-link" href="/#/login" hidden>Ir para entrar</a>
+  </main>
+  <script src="/supabase-config.js"></script>
+  <script>
+    (async () => {
+      const status = document.getElementById('status');
+      const loginLink = document.getElementById('login-link');
+      const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+      const accessToken = params.get('access_token');
+      const error = params.get('error_description') || params.get('error');
+      if (error) {
+        status.textContent = 'Este link não pôde ser confirmado. Solicite um novo link na tela de entrada.';
+        loginLink.hidden = false;
+        return;
+      }
+      if (!accessToken) {
+        status.textContent = 'Link inválido ou expirado. Solicite um novo link na tela de entrada.';
+        loginLink.hidden = false;
+        return;
+      }
+      try {
+        const response = await fetch(`${window.SUPABASE_URL}/functions/v1/email-verification-gateway?a=confirm_email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': window.SUPABASE_PUBLISHABLE_KEY,
+            'Authorization': `Bearer ${accessToken}`,
+          },
+          body: '{}',
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error('confirmation_failed');
+        status.textContent = 'E-mail confirmado com sucesso. Seus dados e sua senha continuam os mesmos.';
+        loginLink.hidden = false;
+      } catch {
+        status.textContent = 'Não foi possível confirmar agora. O link pode ter expirado; solicite outro na tela de entrada.';
+        loginLink.hidden = false;
+      }
+    })();
+  </script>
+</body>
+</html>

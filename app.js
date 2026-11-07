@@ -160,7 +160,7 @@ function publicProfileUrl(id) {
 }
 
 async function api(action, body, query = '', quiet = false) {
-  const response = await fetch(`${window.SUPABASE_URL}/functions/v1/conectaelas-api-enhanced?a=${action}${query}`, {
+  const response = await fetch(`${window.SUPABASE_URL}/functions/v1/email-verification-gateway?a=${action}${query}`, {
     method: body ? 'POST' : 'GET',
     headers: { 'Content-Type': 'application/json', 'X-Token': T, apikey: window.SUPABASE_PUBLISHABLE_KEY },
     body: body ? JSON.stringify(body) : undefined,
@@ -368,7 +368,8 @@ function authForm(register) {
       <small class="muted" id="consent-hint" aria-live="polite">Marque o aceite dos Termos de Uso para habilitar o cadastro.</small>
     </fieldset>` : ''}
     <label for="email">E-mail</label><input id="email" type="email"><label for="pw">Senha</label><input id="pw" type="password"><br><br><button class="btn" id="ok" style="width:100%" ${register ? 'disabled aria-describedby="consent-hint"' : ''}>${register ? 'Cadastrar' : 'Entrar'}</button>
-    <p class="muted">${register ? 'Já tem conta? <a href="#/login">Entrar</a>' : 'Novo aqui? <a href="#/cadastro">Cadastre-se</a>'}</p></div>`;
+    <p class="muted">${register ? 'Já tem conta? <a href="#/login">Entrar</a>' : 'Novo aqui? <a href="#/cadastro">Cadastre-se</a>'}</p>
+    ${!register ? '<button class="btn" id="resend-verification" type="button" style="width:100%">Reenviar confirmação de e-mail</button>' : ''}</div>`;
   if (register) {
     categoriesReady = api('cats').then((categories) => {
       $('#cat1').innerHTML = specialtyOptions(categories);
@@ -422,10 +423,29 @@ function authForm(register) {
       }
     }
     const result = await api(register ? 'register' : 'login', body);
+    if (register && result.verification_required) {
+      alert(result.email_sent
+        ? 'Cadastro salvo. Enviamos um link de confirmação para seu e-mail; confirme antes de entrar.'
+        : 'Cadastro salvo, mas não foi possível enviar o e-mail agora. Use “Reenviar confirmação de e-mail” na tela de entrada.');
+      location.hash = '#/login';
+      return;
+    }
     T = result.token; U = result.user;
     localStorage.t = T; localStorage.u = JSON.stringify(U);
     location.hash = U.role === 'admin' ? '#/admin' : '#/painel';
   };
+  if (!register) {
+    $('#resend-verification').onclick = async () => {
+      const email = $('#email').value.trim();
+      if (!email) return alert('Informe seu e-mail para solicitar o reenvio.');
+      try {
+        await api('resend_verification', { email }, '', true);
+        alert('Se o e-mail estiver cadastrado, enviaremos um novo link de confirmação. Confira sua caixa de entrada e o spam.');
+      } catch {
+        alert('Não foi possível solicitar o reenvio agora. Tente novamente mais tarde.');
+      }
+    };
+  }
 }
 const login = () => authForm(false);
 const cadastro = () => authForm(true);
