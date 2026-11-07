@@ -369,7 +369,7 @@ function authForm(register) {
     </fieldset>` : ''}
     <label for="email">E-mail</label><input id="email" type="email"><label for="pw">Senha</label><input id="pw" type="password"><br><br><button class="btn" id="ok" style="width:100%" ${register ? 'disabled aria-describedby="consent-hint"' : ''}>${register ? 'Cadastrar' : 'Entrar'}</button>
     <p class="muted">${register ? 'Já tem conta? <a href="#/login">Entrar</a>' : 'Novo aqui? <a href="#/cadastro">Cadastre-se</a>'}</p>
-    ${!register ? '<button class="btn" id="resend-verification" type="button" style="width:100%">Reenviar confirmação de e-mail</button>' : ''}</div>`;
+    ${!register ? '<button class="btn" id="forgot-password" type="button" style="width:100%">Esqueci minha senha</button><button class="btn" id="resend-verification" type="button" style="width:100%;margin-top:8px">Reenviar confirmação de e-mail</button>' : ''}</div>`;
   if (register) {
     categoriesReady = api('cats').then((categories) => {
       $('#cat1').innerHTML = specialtyOptions(categories);
@@ -435,6 +435,16 @@ function authForm(register) {
     location.hash = U.role === 'admin' ? '#/admin' : '#/painel';
   };
   if (!register) {
+    $('#forgot-password').onclick = async () => {
+      const email = $('#email').value.trim();
+      if (!email) return alert('Informe seu e-mail para solicitar a recuperação da senha.');
+      try {
+        await api('request_password_reset', { email }, '', true);
+        alert('Se houver uma conta com esse e-mail, enviaremos um link para criar uma nova senha. Confira também o spam.');
+      } catch {
+        alert('Não foi possível solicitar a recuperação agora. Tente novamente mais tarde.');
+      }
+    };
     $('#resend-verification').onclick = async () => {
       const email = $('#email').value.trim();
       if (!email) return alert('Informe seu e-mail para solicitar o reenvio.');

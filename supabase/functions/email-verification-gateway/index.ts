@@ -7,6 +7,7 @@ const publicKeys = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}")
 const PUBLIC_KEY = publicKeys.default ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const EXISTING_API = `${SUPABASE_URL}/functions/v1/conectaelas-api-enhanced`;
 const CONFIRMATION_URL = "https://conectafemme.vercel.app/confirmar-email.html";
+const PASSWORD_RECOVERY_URL = "https://conectafemme.vercel.app/recuperar-senha.html";
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "content-type, apikey, x-token, authorization",
@@ -23,6 +24,13 @@ function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...CORS_HEADERS, "content-type": "application/json; charset=utf-8" } });
 }
 function bodyString(body: any, key: string) { return String(body?.[key] ?? "").trim(); }
+function toHex(bytes: Uint8Array) { return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
+async function hashPassword(password: string, saltHex: string) {
+  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map((value) => Number.parseInt(value, 16)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 310000, hash: "SHA-256" }, key, 256);
+  return `pbkdf2:310000:${saltHex}:${toHex(new Uint8Array(bits))}`;
+}
 
 async function db(table: string, method = "GET", params: Record<string, string> = {}, payload?: unknown) {
   if (!SUPABASE_URL || !SERVICE_KEY) fail(503, "A configuração segura do banco Supabase está indisponível.");
@@ -61,6 +69,26 @@ async function sendConfirmationEmail(email: string): Promise<boolean> {
     return true;
   } catch (error) {
     console.error("Supabase confirmation email request failed", error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
+}
+
+async function sendPasswordRecoveryEmail(email: string): Promise<boolean> {
+  const url = new URL("/auth/v1/recover", SUPABASE_URL);
+  url.searchParams.set("redirect_to", PASSWORD_RECOVERY_URL);
+  try {
+    const result = await fetch(url, {
+      method: "POST",
+      headers: { apikey: PUBLIC_KEY, "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!result.ok) {
+      console.error("Supabase password recovery request failed", result.status);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("Supabase password recovery request failed", error instanceof Error ? error.name : "UnknownError");
     return false;
   }
 }
@@ -110,6 +138,38 @@ async function confirmEmail(req: Request) {
   return json({ ok: true });
 }
 
+async function resetCustomPassword(req: Request, input: any) {
+  if (req.method !== "POST") fail(405, "Método não permitido.");
+  const authorization = req.headers.get("authorization") ?? "";
+  const accessToken = authorization.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+  if (!accessToken) fail(401, "Link de recuperação inválido ou expirado.");
+  const password = String(input?.password ?? "");
+  if (password.length < 8 || password.length > 128) fail(400, "A nova senha deve ter entre 8 e 128 caracteres.");
+
+  const authResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: { apikey: PUBLIC_KEY, authorization: `Bearer ${accessToken}` },
+  });
+  if (!authResponse.ok) fail(401, "Link de recuperação inválido ou expirado.");
+  const authUser: any = await authResponse.json();
+  const email = String(authUser?.email ?? "").trim().toLowerCase();
+  if (!email) fail(401, "Link de recuperação inválido ou expirado.");
+
+  const accounts = await db("users", "GET", { select: "id,is_demo", email: `eq.${email}`, limit: "1" });
+  const account = Array.isArray(accounts) ? accounts[0] : null;
+  if (!account || account.is_demo) fail(404, "Cadastro não encontrado.");
+
+  const saltHex = toHex(crypto.getRandomValues(new Uint8Array(16)));
+  const passwordHash = await hashPassword(password, saltHex);
+  const updates: Record<string, unknown> = { pass: passwordHash };
+  const confirmedAt = String(authUser?.email_confirmed_at ?? "");
+  if (confirmedAt) {
+    updates.email_confirmed_at = confirmedAt;
+    updates.confirmation_required = false;
+  }
+  await db("users", "PATCH", { id: `eq.${Number(account.id)}` }, updates);
+  return json({ ok: true });
+}
+
 async function handle(req: Request) {
   if (req.method === "OPTIONS") return json({ ok: true });
   if (!SUPABASE_URL || !SERVICE_KEY || !PUBLIC_KEY) fail(503, "A configuração segura do Supabase está incompleta.");
@@ -124,6 +184,18 @@ async function handle(req: Request) {
   }
 
   if (action === "confirm_email") return await confirmEmail(req);
+
+  if (action === "request_password_reset") {
+    const email = bodyString(input, "email").toLowerCase();
+    if (/^\S+@\S+\.\S+$/.test(email)) {
+      const accounts = await db("users", "GET", { select: "id,is_demo", email: `eq.${email}`, limit: "1" });
+      const account = Array.isArray(accounts) ? accounts[0] : null;
+      if (account && !account.is_demo) await sendPasswordRecoveryEmail(email);
+    }
+    return json({ ok: true });
+  }
+
+  if (action === "reset_password") return await resetCustomPassword(req, input);
 
   if (action === "resend_verification") {
     const email = bodyString(input, "email").toLowerCase();

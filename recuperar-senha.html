@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7c334b">
+  <title>Recuperar senha | ConectaFemme</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #34252a; background: #fffaf8; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    main { width: min(100%, 480px); padding: 36px; box-sizing: border-box; border: 1px solid #eadde0; border-radius: 18px; background: #fff; box-shadow: 0 16px 48px #4b263010; text-align: center; }
+    h1 { margin: 0 0 12px; color: #7c334b; font-family: Georgia, serif; font-size: 1.8rem; }
+    p { line-height: 1.6; }
+    label { display: block; margin: 16px 0 6px; text-align: left; font-weight: 600; }
+    input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #d8c6cc; border-radius: 10px; font: inherit; }
+    button, a { display: inline-block; margin-top: 18px; padding: 12px 20px; border: 0; border-radius: 999px; background: #7c334b; color: #fff; text-decoration: none; font: inherit; font-weight: 650; cursor: pointer; }
+    form[hidden], a[hidden] { display: none; }
+    #status { min-height: 3em; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ConectaFemme</h1>
+    <p id="status" role="status" aria-live="polite">Validando seu link de recuperação…</p>
+    <form id="reset-form" hidden>
+      <label for="new-password">Nova senha</label>
+      <input id="new-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required>
+      <label for="confirm-password">Confirme a nova senha</label>
+      <input id="confirm-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required>
+      <button type="submit">Salvar nova senha</button>
+    </form>
+    <a id="login-link" href="/#/login" hidden>Ir para entrar</a>
+  </main>
+  <script src="/supabase-config.js"></script>
+  <script>
+    (() => {
+      const status = document.getElementById('status');
+      const form = document.getElementById('reset-form');
+      const loginLink = document.getElementById('login-link');
+      const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+      const accessToken = params.get('access_token');
+      const type = params.get('type');
+      const error = params.get('error_description') || params.get('error');
+      const tokenType = params.get('token_type');
+
+      if (error || !accessToken || type !== 'recovery' || (tokenType && tokenType !== 'bearer')) {
+        status.textContent = 'Este link é inválido ou expirou. Solicite uma nova recuperação na tela de entrada.';
+        loginLink.hidden = false;
+        return;
+      }
+
+      status.textContent = 'Escolha uma senha nova com pelo menos 8 caracteres.';
+      form.hidden = false;
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const password = document.getElementById('new-password').value;
+        const confirmation = document.getElementById('confirm-password').value;
+        if (password.length < 8 || password.length > 128) {
+          status.textContent = 'A nova senha deve ter entre 8 e 128 caracteres.';
+          return;
+        }
+        if (password !== confirmation) {
+          status.textContent = 'As senhas não coincidem. Confira e tente novamente.';
+          return;
+        }
+        const submit = form.querySelector('button');
+        submit.disabled = true;
+        status.textContent = 'Salvando sua nova senha…';
+        try {
+          const response = await fetch(`${window.SUPABASE_URL}/functions/v1/email-verification-gateway?a=reset_password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': window.SUPABASE_PUBLISHABLE_KEY,
+              'Authorization': `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ password }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) throw new Error(result.error || 'reset_failed');
+          form.hidden = true;
+          status.textContent = 'Senha alterada. Entre com a nova senha; seus outros dados foram preservados.';
+          loginLink.hidden = false;
+        } catch (error) {
+          status.textContent = error.message === 'Failed to fetch'
+            ? 'Não foi possível conectar agora. Verifique a internet e tente novamente.'
+            : 'Não foi possível redefinir a senha. O link pode ter expirado; solicite outro na tela de entrada.';
+          submit.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

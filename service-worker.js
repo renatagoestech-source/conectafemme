@@ -1,8 +1,9 @@
-const CACHE_NAME = 'conectafemme-shell-v16';
+const CACHE_NAME = 'conectafemme-shell-v17';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/confirmar-email.html',
+  '/recuperar-senha.html',
   '/conheca.html',
   '/termos.html',
   '/manifest.webmanifest',
