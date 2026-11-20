@@ -595,33 +595,24 @@ function financeMarkup() {
     <div class="box no-print"><h3>Gerar relatório</h3><div class="finance-filters"><label>De<input id="finance-from" type="date" value="${monthStart}"></label><label>Até<input id="finance-to" type="date" value="${today}"></label><button class="btn" id="finance-filter" type="button">Atualizar relatório</button><button class="btn out" id="finance-print" type="button">Imprimir relatório</button></div></div><div id="finance-report"></div>`;
 }
 
-async function compressForUpload(file) {
+async function compressForUpload(file, kind = 'profile') {
   if (!IMAGE_TYPES.includes(file.type)) throw new Error('Use uma imagem JPG, PNG ou WebP.');
   if (file.size > 15_000_000) throw new Error('Escolha uma imagem com até 15 MB antes da otimização.');
-  let dataUrl;
-  if (file.size <= 2_500_000) {
-    dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
-      reader.readAsDataURL(file);
-    });
-  } else {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    dataUrl = canvas.toDataURL('image/webp', 0.82);
-  }
+  const bitmap = await createImageBitmap(file);
+  const maxDimension = kind === 'service' ? 1200 : 1600;
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const dataUrl = canvas.toDataURL('image/webp', kind === 'service' ? 0.78 : 0.82);
   if (dataUrl.length > 4_200_000) throw new Error('A imagem continua muito grande após a compressão. Escolha outra imagem.');
   return dataUrl;
 }
 
 async function uploadSelected(file, kind) {
-  return api('image_upload', { kind, data_url: await compressForUpload(file) });
+  return api('image_upload', { kind, data_url: await compressForUpload(file, kind) });
 }
 
 async function copyPublicLink(id) {
@@ -642,6 +633,30 @@ function buildManualBookingForm(services, slots) {
       <label>Horário disponível<select id="manual-slot"><option value="">Escolha dia e horário</option>${available.map((slot) => `<option value="${slot.id}">${fd(slot.day)} · ${esc(slot.hour)}</option>`).join('')}</select></label>
       <label>Nome da cliente<input id="manual-name" maxlength="120" autocomplete="name"></label><label>WhatsApp da cliente<input id="manual-whatsapp" inputmode="tel" maxlength="30" placeholder="DDD + número" autocomplete="tel"></label></div>
     <br><button class="btn" id="manual-save" ${!available.length || !services.length ? 'disabled' : ''}>Salvar agendamento</button>${!available.length ? '<p class="muted">Não há horários livres. Configure o expediente na aba Expediente.</p>' : ''}</div>`;
+}
+
+const DEFAULT_AFTERCARE_MESSAGE = 'Olá, {cliente}! Aqui é da {estabelecimento}. Gostaria de saber como você está após seu atendimento. Se precisar de algo, estamos à disposição!';
+function aftercareMessage(providerId) {
+  return localStorage.getItem(`aftercare-message-${providerId}`) || DEFAULT_AFTERCARE_MESSAGE;
+}
+function clientsTabMarkup(bookings, providerId, establishment) {
+  const clients = new Map();
+  bookings.forEach((booking) => {
+    const name = String(booking.other_name || '').trim();
+    const whatsapp = String(booking.other_whatsapp || '').trim();
+    if (!name) return;
+    const key = whatsapp.replace(/\D/g, '') || name.toLocaleLowerCase('pt-BR');
+    if (!clients.has(key)) clients.set(key, { name, whatsapp, visits: [] });
+    clients.get(key).visits.push(booking);
+  });
+  const message = aftercareMessage(providerId);
+  const renderMessage = (client) => message.replaceAll('{cliente}', client.name).replaceAll('{estabelecimento}', establishment);
+  const rows = [...clients.values()].map((client) => {
+    const latest = client.visits[0];
+    return `<tr><td>${esc(client.name)}</td><td>${client.visits.length}</td><td>${esc(latest?.title || 'Atendimento')}</td><td>${fd(latest?.day)} ${esc(latest?.hour || '')}</td><td>${client.whatsapp ? `<a class="btn wa sm aftercare-link" target="_blank" rel="noopener noreferrer" data-client-name="${esc(client.name)}" href="${wa(client.whatsapp, renderMessage(client))}">WhatsApp</a>` : '<span class="muted">Sem WhatsApp</span>'}</td></tr>`;
+  }).join('');
+  return `<section class="box aftercare-settings"><h3>Mensagem de pós-atendimento</h3><p class="muted">Personalize o texto uma vez. Os dados entre chaves são preenchidos para cada cliente automaticamente.</p><label for="aftercare-template">Mensagem padrão</label><textarea id="aftercare-template" rows="4" maxlength="1000">${esc(message)}</textarea><p class="aftercare-hints">Campos automáticos: <code>{cliente}</code> e <code>{estabelecimento}</code> (${esc(establishment)}).</p><button class="btn" id="save-aftercare" type="button">Salvar mensagem</button></section>
+    <div class="box"><h3>Clientes atendidas</h3><p class="muted">Lista baseada nos agendamentos registrados no seu perfil.</p>${rows ? `<table><thead><tr><th>Cliente</th><th>Atendimentos</th><th>Último serviço</th><th>Data</th><th>Pós-atendimento</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted">Nenhuma cliente com atendimento registrado ainda.</p>'}</div>`;
 }
 
 async function painel(tab = 'ag') {
@@ -683,10 +698,19 @@ async function painel(tab = 'ag') {
       <div class="box"><h3>Horários extras para uma data</h3><p class="muted">Adicione disponibilidades avulsas sem alterar seu expediente semanal.</p><div class="manual-booking-grid"><label>Data<input id="extra-day" type="date" min="${todayInBrazil()}"></label><div><label>Horários disponíveis</label><div id="extra-times" class="availability-times"></div><button class="btn out sm" id="extra-time-add" type="button">Adicionar horário</button></div></div><br><button class="btn" id="add-extra">Salvar horários extras</button></div>
       ${futureAvailabilityMarkup(slots)}`,
     agenda: agendaReportMarkup(bookings, window._agendaSelection?.view || 'day', window._agendaSelection?.date || todayInBrazil()),
+    clientes: clientsTabMarkup(bookings, U.id, me.name || ''),
     financeiro: financeMarkup(),
   };
-  app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs no-print">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['expediente','Expediente'],['agenda','Agenda'],['financeiro','Financeiro']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab] || tabs.ag}`;
+  app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs no-print">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['expediente','Expediente'],['agenda','Agenda'],['clientes','Clientes'],['financeiro','Financeiro']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab] || tabs.ag}`;
   const on = (selector, handler) => { if ($(selector)) $(selector).onclick = handler; };
+
+  if (tab === 'clientes') {
+    on('#save-aftercare', () => {
+      localStorage.setItem(`aftercare-message-${U.id}`, $('#aftercare-template').value.trim() || DEFAULT_AFTERCARE_MESSAGE);
+      alert('Mensagem de pós-atendimento salva. Os nomes serão preenchidos automaticamente nos links do WhatsApp.');
+      painel('clientes');
+    });
+  }
 
   if (tab === 'expediente') {
     document.querySelectorAll('.add-week-time').forEach((button) => button.addEventListener('click', () => addAvailabilityTime(button.closest('.week-hours').querySelector('.week-times'), 'week-time', 'remove-week-time')));

@@ -468,6 +468,23 @@ nav { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
 .legal-consent input[type="checkbox"] { flex: 0 0 18px; width: 18px; min-height: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: var(--p); cursor: pointer; }
 .legal-consent a { color: var(--p); font-weight: 700; text-underline-offset: 3px; }
 .legal-consents > small { display: block; margin-top: 8px; line-height: 1.45; }
+
+/* A logo circular ultrapassa a imagem de capa sem ser cortada pelo contêiner. */
+.card .img { overflow: visible; }
+.card .logo { bottom: -22px; }
+.card .info { padding-top: 32px; }
+
+/* Fotos de divulgação mais contidas e proporcionais. */
+@media (min-width: 641px) {
+  .service-gallery { grid-template-columns: repeat(2, minmax(0, 440px)); justify-content: start; }
+  .service-gallery .main-img { height: 220px; max-height: 220px; }
+}
+@media (max-width: 640px) {
+  .service-gallery .main-img { max-height: 290px; aspect-ratio: 4 / 3; object-fit: cover; }
+}
+.aftercare-settings textarea { max-width: 760px; min-height: 110px; }
+.aftercare-hints { margin: 7px 0 12px; color: var(--m); font-size: .82rem; }
+.aftercare-hints code { padding: 2px 5px; border-radius: 5px; background: var(--p2); color: var(--p); }
 @media (max-width: 380px) {
   header { padding-inline: 12px; }
   .brand-symbol { width: 42px; height: 40px; max-width: 42px; max-height: 40px; }
