@@ -290,11 +290,10 @@ async function provider(id) {
   let selectedSlot = null;
   const availableSlots = professional.slots.filter((slot) => !slot.booked && slot.available !== false);
   const days = [...new Set(availableSlots.map((slot) => slot.day))];
-  const calendarMarkup = `<section class="box booking-calendar"><div class="booking-calendar-header"><span class="booking-kicker">AGENDA</span><h3>${professional.is_demo ? 'Agenda de exemplo' : 'Agendar atendimento'}</h3><p class="booking-intro">${professional.is_demo ? 'Escolha um dia para conferir os horários ilustrativos.' : 'Escolha um dia para consultar os horários livres.'}</p></div>
-    ${professional.is_demo ? '<p class="demo-note">Horários ilustrativos. Perfis demonstrativos não aceitam agendamentos.</p>' : ''}
+  const calendarMarkup = `<section class="box booking-calendar"><div class="booking-calendar-header"><span class="booking-kicker">AGENDA</span><h3>Agendar atendimento</h3><p class="booking-intro">Escolha um dia para consultar os horários livres.</p></div>
     <div class="booking-date-control"><label for="day">Dia disponível</label><select id="day" ${days.length ? '' : 'disabled'}><option value="">${days.length ? 'Selecione um dia' : 'Nenhum horário disponível'}</option>${days.map((day) => `<option value="${esc(day)}">${fd(day)}</option>`).join('')}</select></div>
     <div class="booking-time-panel"><h4 class="booking-time-heading">Horários disponíveis</h4><div class="booking-time-grid" id="hrs" aria-live="polite"><p class="booking-calendar-empty">${days.length ? 'Selecione um dia para ver os horários disponíveis.' : 'Nenhum horário disponível no momento.'}</p></div></div>
-    ${professional.is_demo ? '' : '<p id="sel" class="booking-selection-summary">Escolha um serviço acima.</p><button class="btn booking-confirm" id="bk" type="button" disabled>Confirmar agendamento</button>'}</section>`;
+    <p id="sel" class="booking-selection-summary">Escolha um serviço acima.</p><button class="btn booking-confirm" id="bk" type="button" disabled>Confirmar agendamento</button></section>`;
   const instagram = professional.instagram_url
     ? `<a class="btn out sm" href="${esc(professional.instagram_url)}" target="_blank" rel="noopener noreferrer">Instagram</a>`
     : '';
@@ -304,7 +303,7 @@ async function provider(id) {
       const images = imgs(service.images);
       return `<div class="box">${images[0] ? `<img class="main-img" id="m${service.id}" src="${esc(images[0])}" alt="Foto do serviço ${esc(service.title)}">` : '<div class="main-img service-placeholder" aria-label="Imagem ilustrativa">ConectaFemme</div>'}
         <div class="thumbs">${images.map((image) => `<img src="${esc(image)}" alt="Foto de ${esc(service.title)}" onclick="document.getElementById('m${service.id}').src=this.src">`).join('')}</div><h4>${esc(service.title)}</h4><p class="muted">${esc(service.descr)}</p><div class="price">${brl(service.price)}</div>
-        ${professional.is_demo ? '<span class="tag demo-tag">Serviço de exemplo</span>' : `<button class="btn sm" data-s="${service.id}">Escolher</button>`}</div>`;
+        <button class="btn sm" data-s="${service.id}">Escolher</button></div>`;
     }).join('') || '<p class="muted">Sem serviços ainda.</p>'}</div>
     ${professional.reviews?.length ? `<details class="box reviews-box"><summary class="reviews-summary"><span><strong>Avaliações de clientes</strong><small>Ver comentários deixados</small></span>${ratingSummary(professional.rating_avg, professional.review_count)}</summary><div class="review-list">${professional.reviews.slice(0, 6).map((review) => `<article class="review-item"><div><strong>${esc(review.client_name || 'Cliente')}</strong><span class="review-stars">${'★'.repeat(Number(review.rating))}${'☆'.repeat(5 - Number(review.rating))}</span></div><p>${esc(review.comment || 'Atendimento avaliado pela cliente.')}</p></article>`).join('')}</div></details>` : ''}
     ${calendarMarkup}`;
@@ -326,10 +325,6 @@ async function provider(id) {
       syncBookingButton();
       return;
     }
-    if (professional.is_demo) {
-      $('#hrs').innerHTML = slotsForDay.map((slot) => `<span class="booking-time-chip is-demo">${esc(slot.hour)}</span>`).join('');
-      return;
-    }
     $('#hrs').innerHTML = slotsForDay.map((slot) => `<button class="booking-time-chip" type="button" data-i="${esc(slot.id)}">${esc(slot.hour)}</button>`).join('');
     document.querySelectorAll('#hrs [data-i]').forEach((button) => button.onclick = () => {
       selectedSlot = button.dataset.i;
@@ -339,23 +334,21 @@ async function provider(id) {
     });
     syncBookingButton();
   };
-  if (!professional.is_demo) {
-    document.querySelectorAll('[data-s]').forEach((button) => button.onclick = () => {
+  document.querySelectorAll('[data-s]').forEach((button) => button.onclick = () => {
       selectedService = button.dataset.s;
       document.querySelectorAll('[data-s]').forEach((item) => item.classList.remove('service-selected'));
       button.classList.add('service-selected');
       $('#sel').textContent = `Serviço selecionado: ${button.parentNode.querySelector('h4').textContent}`;
       syncBookingButton();
     });
-    $('#bk').onclick = async () => {
+  $('#bk').onclick = async () => {
       if (!U || U.role !== 'client') { alert('Entre como cliente para agendar.'); location.hash = '#/login'; return; }
       if (!selectedService || !selectedSlot) { alert('Escolha serviço, dia e horário.'); return; }
       await api('book', { slot_id: selectedSlot, service_id: selectedService });
       await pushApi('notify_booking', { slot_id: selectedSlot, service_id: selectedService }, true).catch((error) => console.warn('Não foi possível enviar o aviso de agendamento:', error));
       alert('Agendado! Combine os detalhes pelo WhatsApp.');
       location.hash = '#/painel';
-    };
-  }
+  };
 }
 
 function authForm(register) {

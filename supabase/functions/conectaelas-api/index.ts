@@ -419,8 +419,6 @@ async function handle(req: Request) {
       const me = await auth(req, ["client"]);
       const sl = first(await get("slots", { select: "id,provider_id", id: idFilter(input.slot_id), booked: "eq.false", available: "eq.true", limit: "1" }));
       if (!sl) fail(400, "Horário indisponível");
-      const owner = first(await get("users", { select: "is_demo", id: idFilter(sl.provider_id), role: "eq.provider", limit: "1" }));
-      if (owner?.is_demo) fail(400, "Este perfil demonstrativo não aceita agendamentos.");
       const sv = first(await get("services", { select: "id", id: idFilter(input.service_id), provider_id: idFilter(sl.provider_id), limit: "1" }));
       if (!sv) fail(400, "Horário indisponível");
       const booked = await patch("slots", { id: idFilter(sl.id), booked: "eq.false", available: "eq.true" }, { booked: true });
@@ -433,8 +431,6 @@ async function handle(req: Request) {
       const name = bodyString(input, "name"), whatsapp = bodyString(input, "whatsapp");
       if (!name || name.length > 120 || whatsapp.replace(/\D/g, "").length < 8 || whatsapp.length > 30)
         fail(400, "Informe o nome e um WhatsApp válido da cliente.");
-      const owner = first(await get("users", { select: "is_demo", id: idFilter(me.id), role: "eq.provider", limit: "1" }));
-      if (owner?.is_demo) fail(400, "Perfis demonstrativos não aceitam agendamentos.");
       const sl = first(await get("slots", { select: "id,provider_id", id: idFilter(input.slot_id), provider_id: idFilter(me.id), booked: "eq.false", available: "eq.true", limit: "1" }));
       if (!sl) fail(400, "Esse horário não está mais disponível.");
       const sv = first(await get("services", { select: "id", id: idFilter(input.service_id), provider_id: idFilter(me.id), limit: "1" }));

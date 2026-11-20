@@ -479,6 +479,14 @@ nav { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
   .service-gallery { grid-template-columns: repeat(2, minmax(0, 440px)); justify-content: start; }
   .service-gallery .main-img { height: 220px; max-height: 220px; }
 }
+@media (min-width: 1100px) {
+  .service-gallery { grid-template-columns: repeat(4, minmax(0, 1fr)); justify-content: stretch; gap: 14px; }
+  .service-gallery .main-img { height: 145px; max-height: 145px; aspect-ratio: 16 / 10; }
+  .service-gallery .box { padding: 14px; }
+}
+@media (min-width: 641px) and (max-width: 1099px) {
+  .service-gallery .main-img { height: 175px; max-height: 175px; }
+}
 @media (max-width: 640px) {
   .service-gallery .main-img { max-height: 290px; aspect-ratio: 4 / 3; object-fit: cover; }
 }
