@@ -7,6 +7,9 @@ const SERVICE_KEY = secrets.default ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
 const publishables = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}");
 const PUBLIC_KEY = publishables.default ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const encoder = new TextEncoder();
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+const RESEND_FROM_EMAIL = Deno.env.get("RESEND_FROM_EMAIL") ?? "";
+const APP_ORIGIN = (Deno.env.get("APP_ORIGIN") ?? "https://conectaelasapp.vercel.app").replace(/\/$/, "");
 
 class ApiError extends Error {
   status: number;
@@ -210,6 +213,70 @@ async function notifyStatus(req: Request, input: any) {
   });
 }
 
+async function notifyReschedule(req: Request, input: any) {
+  const me = await authenticate(req, ["client"]);
+  const bookingId = Number(input.id);
+  if (!Number.isInteger(bookingId) || bookingId <= 0) fail(400, "Agendamento inválido.");
+  const booking = first(await get("bookings", {
+    select: "id,slot_id,service_id,client_id,provider_id,status,reschedule_version",
+    id: idFilter(bookingId), client_id: idFilter(me.id), status: "eq.confirmado", limit: "1",
+  }));
+  if (!booking || Number(booking.reschedule_version) < 1) fail(404, "Remarcação não encontrada.");
+  const [slot, service, client, provider, subscriptions] = await Promise.all([
+    get("slots", { select: "day,hour", id: idFilter(Number(booking.slot_id)), limit: "1" }),
+    get("services", { select: "title", id: idFilter(Number(booking.service_id)), limit: "1" }),
+    get("users", { select: "name", id: idFilter(Number(booking.client_id)), limit: "1" }),
+    get("users", { select: "name,email", id: idFilter(Number(booking.provider_id)), limit: "1" }),
+    get("push_subscriptions", { select: "endpoint", user_id: idFilter(Number(booking.provider_id)), limit: "1" }),
+  ]);
+  const payload = {
+    title: "Atendimento remarcado",
+    body: `${client[0]?.name ?? "Uma cliente"} remarcou ${service[0]?.title ?? "o atendimento"} para ${dateBr(slot[0]?.day)} às ${slot[0]?.hour ?? ""}.`,
+    url: "/#/painel",
+  };
+  const version = Number(booking.reschedule_version);
+  const push = Array.isArray(subscriptions) && subscriptions.length
+    ? await dispatchEvent(`reschedule:${booking.id}:${version}`, booking.provider_id, payload)
+    : { ok: 1, skipped: true, reason: "no_push_subscription" };
+  let email: { sent?: boolean; skipped?: boolean; reason?: string } = { skipped: true, reason: "email_not_configured" };
+  if (provider[0]?.email && RESEND_API_KEY && RESEND_FROM_EMAIL) {
+    const eventKey = `email:reschedule:${booking.id}:${version}`;
+    const claimed = await db("push_event_log", "POST", { on_conflict: "event_key" }, { event_key: eventKey }, "resolution=ignore-duplicates,return=representation");
+    if (!Array.isArray(claimed) || !claimed.length) {
+      email = { skipped: true, reason: "duplicate" };
+    } else {
+      const safe = (value: unknown) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
+      const subject = "Uma cliente remarcou um atendimento no ConectaFemme";
+      const text = `${client[0]?.name ?? "Uma cliente"} remarcou ${service[0]?.title ?? "o atendimento"} para ${dateBr(slot[0]?.day)} às ${slot[0]?.hour ?? ""}.`;
+      try {
+        const result = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { authorization: `Bearer ${RESEND_API_KEY}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            from: RESEND_FROM_EMAIL,
+            to: [provider[0].email],
+            subject,
+            text,
+            html: `<div style="font-family:Arial,sans-serif;color:#38242a;line-height:1.6"><h2 style="color:#7b1e3a">ConectaFemme</h2><p>Olá${provider[0].name ? `, ${safe(provider[0].name)}` : ""}.</p><p>${safe(text)}</p><p>Acesse o painel para conferir a atualização.</p><p><a href="${safe(APP_ORIGIN)}/#/painel">Abrir painel</a></p></div>`,
+          }),
+        });
+        if (!result.ok) {
+          try { await del("push_event_log", { event_key: `eq.${eventKey}` }); } catch { /* retry cleanup best effort */ }
+          console.error("Reschedule email delivery failed", result.status);
+          email = { skipped: true, reason: "delivery_failed" };
+        } else {
+          email = { sent: true };
+        }
+      } catch (error) {
+        try { await del("push_event_log", { event_key: `eq.${eventKey}` }); } catch { /* retry cleanup best effort */ }
+        console.error("Reschedule email request failed", error instanceof Error ? error.name : "UnknownError");
+        email = { skipped: true, reason: "delivery_failed" };
+      }
+    }
+  }
+  return { ok: 1, push, email };
+}
+
 async function handle(req: Request) {
   const url = new URL(req.url), action = url.searchParams.get("a") ?? "";
   let input: any = {};
@@ -242,6 +309,7 @@ async function handle(req: Request) {
     }
     case "notify_booking": return await notifyBooking(req, input);
     case "notify_status": return await notifyStatus(req, input);
+    case "notify_reschedule": return await notifyReschedule(req, input);
     default: fail(404, "Ação de notificação inválida.");
   }
 }

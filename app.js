@@ -222,6 +222,8 @@ function nav() {
 }
 
 function route() {
+  const rescheduleId = rescheduleIdFromHash();
+  if (rescheduleId) sessionStorage.setItem('pending-reschedule', rescheduleId);
   nav();
   const hashRoute = location.hash.slice(2).split('?')[0];
   const parts = hashRoute.split('/');
@@ -425,7 +427,11 @@ function authForm(register) {
     }
     T = result.token; U = result.user;
     localStorage.t = T; localStorage.u = JSON.stringify(U);
-    location.hash = U.role === 'admin' ? '#/admin' : '#/painel';
+    const pendingReschedule = !register && U.role === 'client' ? sessionStorage.getItem('pending-reschedule') : '';
+    if (U.role !== 'client') sessionStorage.removeItem('pending-reschedule');
+    location.hash = pendingReschedule
+      ? `#/painel?remarcar=${encodeURIComponent(pendingReschedule)}`
+      : U.role === 'admin' ? '#/admin' : '#/painel';
   };
   if (!register) {
     $('#forgot-password').onclick = async () => {
@@ -455,7 +461,16 @@ const cadastro = () => authForm(true);
 
 const statusLabel = (status) => ({ pendente: 'Pendente', confirmado: 'Confirmado', concluido: 'OK', cancelado: 'Cancelado' }[status] || status);
 function bookTable(bookings) {
-  return `<table><tr><th>Data</th><th>Serviço</th><th>${U.role === 'client' ? 'Profissional' : 'Cliente'}</th><th>Status</th><th></th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${booking.hour}</td><td>${esc(booking.title)}<br>${brl(booking.price)}</td><td>${esc(booking.other_name || 'Cliente')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td><td>${booking.other_whatsapp ? `<a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(booking.other_whatsapp, `Olá! Sobre o agendamento de ${booking.title} em ${fd(booking.day)} às ${booking.hour}.`)}">WhatsApp</a>` : ''}${U.role === 'client' && booking.can_review ? ` <button class="btn sm" onclick="rateBooking(${booking.id})">Avaliar</button>` : ''}${U.role === 'provider' && booking.status === 'pendente' ? ` <button class="btn sm" onclick="st(${booking.id},'confirmado')">Confirmar</button>` : ''}${booking.status !== 'cancelado' && booking.status !== 'concluido' ? ` <button class="btn red sm" onclick="st(${booking.id},'cancelado')">Cancelar</button>` : ''}</td></tr>`).join('')}</table>`;
+  return `<table><tr><th>Data</th><th>Serviço</th><th>${U.role === 'client' ? 'Profissional' : 'Cliente'}</th><th>Status</th><th></th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${booking.hour}</td><td>${esc(booking.title)}<br>${brl(booking.price)}</td><td>${esc(booking.other_name || 'Cliente')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td><td>${booking.other_whatsapp ? `<a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(booking.other_whatsapp, `Olá! Sobre o agendamento de ${booking.title} em ${fd(booking.day)} às ${booking.hour}.`)}">WhatsApp</a>` : ''}${U.role === 'client' && booking.status === 'confirmado' ? ` <button class="btn out sm" type="button" data-reschedule-id="${Number(booking.id)}">Remarcar</button>` : ''}${U.role === 'client' && booking.can_review ? ` <button class="btn sm" onclick="rateBooking(${booking.id})">Avaliar</button>` : ''}${U.role === 'provider' && booking.status === 'pendente' ? ` <button class="btn sm" onclick="st(${booking.id},'confirmado')">Confirmar</button>` : ''}${booking.status !== 'cancelado' && booking.status !== 'concluido' ? ` <button class="btn red sm" onclick="st(${booking.id},'cancelado')">Cancelar</button>` : ''}</td></tr>`).join('')}</table>`;
+}
+
+function rescheduleDialogMarkup() {
+  return `<dialog id="reschedule-dialog" class="box" aria-labelledby="reschedule-title" style="width:min(560px,calc(100% - 32px));max-height:85vh">
+    <h2 id="reschedule-title">Remarcar atendimento</h2><p id="reschedule-current" class="muted"></p>
+    <label for="reschedule-slot">Novo horário disponível com a mesma profissional</label><select id="reschedule-slot"><option value="">Carregando horários...</option></select>
+    <p id="reschedule-feedback" class="muted" aria-live="polite"></p>
+    <div class="profile-actions"><button class="btn" id="reschedule-confirm" type="button" disabled>Confirmar remarcação</button><button class="btn out" id="reschedule-close" type="button">Agora não</button></div>
+  </dialog>`;
 }
 window.rateBooking = async (id) => {
   const rating = Number(prompt('De 1 a 5, qual nota você dá para o atendimento?'));
@@ -471,6 +486,114 @@ window.st = async (id, status) => {
     await pushApi('notify_status', { id, status }, true).catch((error) => console.warn('Não foi possível enviar o aviso de alteração:', error));
   painel();
 };
+
+function rescheduleIdFromHash() {
+  const queryStart = location.hash.indexOf('?');
+  if (queryStart < 0) return '';
+  const id = new URLSearchParams(location.hash.slice(queryStart + 1)).get('remarcar') || '';
+  return /^\d+$/.test(id) ? id : '';
+}
+
+function clearRescheduleIntent() {
+  sessionStorage.removeItem('pending-reschedule');
+  if (rescheduleIdFromHash()) location.hash = '#/painel';
+}
+
+function setupClientReschedule(bookings) {
+  window._clientBookings = bookings;
+  const dialog = $('#reschedule-dialog');
+  dialog?.addEventListener('close', () => {
+    sessionStorage.removeItem('pending-reschedule');
+    if (rescheduleIdFromHash()) history.replaceState(null, '', `${location.pathname}${location.search}#/painel`);
+  });
+  document.querySelectorAll('[data-reschedule-id]').forEach((button) => {
+    button.addEventListener('click', () => openRescheduleDialog(button.dataset.rescheduleId));
+  });
+  const pendingId = rescheduleIdFromHash() || sessionStorage.getItem('pending-reschedule');
+  if (pendingId) {
+    sessionStorage.removeItem('pending-reschedule');
+    setTimeout(() => openRescheduleDialog(pendingId), 0);
+  }
+}
+
+async function openRescheduleDialog(id) {
+  if (!U || U.role !== 'client') return;
+  const booking = (window._clientBookings || []).find((item) => Number(item.id) === Number(id));
+  if (!booking || booking.status !== 'confirmado') {
+    alert('Este atendimento não está mais disponível para remarcação. Atualize seus agendamentos.');
+    clearRescheduleIntent();
+    return;
+  }
+  const dialog = $('#reschedule-dialog');
+  const select = $('#reschedule-slot');
+  const confirmButton = $('#reschedule-confirm');
+  const feedback = $('#reschedule-feedback');
+  if (!dialog || !select || !confirmButton) return;
+  $('#reschedule-close').onclick = () => dialog.close();
+  $('#reschedule-current').textContent = `${booking.title || 'Atendimento'} com ${booking.other_name || 'a profissional'} — ${fd(booking.day)} às ${booking.hour}.`;
+  select.innerHTML = '<option value="">Carregando horários...</option>';
+  confirmButton.disabled = true;
+  feedback.textContent = '';
+  if (!dialog.open) dialog.showModal();
+
+  try {
+    const profile = await api('provider', null, `&id=${encodeURIComponent(booking.provider_id)}`, true);
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+    const clock = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const currentMinutes = Number(clock.hour) * 60 + Number(clock.minute);
+    const slots = (profile.slots || []).filter((slot) => {
+      const hour = String(slot.hour || '').slice(0, 5);
+      const [hours, minutes] = hour.split(':').map(Number);
+      return Number(slot.id) !== Number(booking.slot_id)
+        && (slot.day > todayInBrazil() || (slot.day === todayInBrazil() && hours * 60 + minutes > currentMinutes));
+    }).sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`));
+    if (!slots.length) {
+      select.innerHTML = '<option value="">Nenhum horário futuro disponível</option>';
+      feedback.textContent = 'Não encontramos outro horário livre com esta profissional. Tente novamente mais tarde ou fale com ela pelo WhatsApp.';
+      return;
+    }
+    select.innerHTML = `<option value="">Selecione uma nova data e horário</option>${slots.map((slot) => `<option value="${Number(slot.id)}">${fd(slot.day)} às ${esc(String(slot.hour).slice(0, 5))}</option>`).join('')}`;
+    select.onchange = () => { confirmButton.disabled = !select.value; };
+  } catch (error) {
+    select.innerHTML = '<option value="">Não foi possível carregar os horários</option>';
+    feedback.textContent = error?.error || 'Não foi possível consultar a agenda. Tente novamente.';
+    return;
+  }
+
+  confirmButton.onclick = async () => {
+    const newSlotId = Number(select.value);
+    if (!Number.isSafeInteger(newSlotId) || newSlotId < 1) return;
+    confirmButton.disabled = true;
+    feedback.textContent = 'Confirmando a troca de horário…';
+    try {
+      await api('booking_reschedule', { id: Number(booking.id), slot_id: newSlotId }, '', true);
+    } catch (error) {
+      feedback.textContent = error?.error || 'Não foi possível concluir a remarcação. Escolha outro horário e tente novamente.';
+      confirmButton.disabled = false;
+      return;
+    }
+
+    let notification;
+    try {
+      notification = await pushApi('notify_reschedule', { id: Number(booking.id) }, true);
+    } catch (error) {
+      console.warn('Remarcação salva, mas o aviso à profissional falhou:', error);
+    }
+    dialog.close();
+    sessionStorage.removeItem('pending-reschedule');
+    if (rescheduleIdFromHash()) location.hash = '#/painel';
+    let message = 'O atendimento foi remarcado.';
+    const notified = Boolean(notification?.push && !notification.push.skipped) || Boolean(notification?.email?.sent);
+    if (notified) message += notification.email?.sent
+      ? ' A profissional foi avisada por notificação e e-mail.'
+      : ' A profissional foi avisada por notificação no app.';
+    else message += ' Não foi possível confirmar o aviso automático; entre em contato com a profissional pelo WhatsApp.';
+    if (notification?.email?.reason === 'email_not_configured') message += ' O envio de e-mail ainda depende da configuração do remetente da plataforma.';
+    if (notification?.email?.reason === 'delivery_failed') message += ' O e-mail de aviso não foi aceito pelo serviço de envio.';
+    alert(message);
+    painel('ag');
+  };
+}
 
 function legacyScheduleTimes(settings) {
   if (Array.isArray(settings.times)) return [...new Set(settings.times.map(String).filter((time) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)))].sort();
@@ -659,7 +782,8 @@ async function painel(tab = 'ag') {
   if (U.role === 'client') {
     const location = await api('client_location');
     const hasLocation = Boolean(location.city || location.state);
-    app.innerHTML = `<h2>Meus agendamentos</h2><details class="box client-location-card" ${hasLocation ? '' : 'open'}><summary><strong>Minha localidade</strong><span class="muted">${hasLocation ? 'Atualize cidade e estado' : 'Opcional · ajuda nas métricas da comunidade'}</span></summary><p class="muted">A localidade é usada apenas em métricas agregadas do painel administrativo e não aparece no perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-location-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option value="${state}" ${state === location.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-location-city" maxlength="80" value="${esc(location.city || '')}" autocomplete="address-level2"></label></div><br><button class="btn" id="client-location-save" type="button">Salvar localidade</button></details><div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Nenhum agendamento.</p>'}</div>`;
+    app.innerHTML = `<h2>Meus agendamentos</h2><details class="box client-location-card" ${hasLocation ? '' : 'open'}><summary><strong>Minha localidade</strong><span class="muted">${hasLocation ? 'Atualize cidade e estado' : 'Opcional · ajuda nas métricas da comunidade'}</span></summary><p class="muted">A localidade é usada apenas em métricas agregadas do painel administrativo e não aparece no perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-location-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option value="${state}" ${state === location.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-location-city" maxlength="80" value="${esc(location.city || '')}" autocomplete="address-level2"></label></div><br><button class="btn" id="client-location-save" type="button">Salvar localidade</button></details><div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Nenhum agendamento.</p>'}</div>${rescheduleDialogMarkup()}`;
+    setupClientReschedule(bookings);
     $('#client-location-save').onclick = async () => {
       const state = $('#client-location-state').value;
       const city = $('#client-location-city').value.trim();

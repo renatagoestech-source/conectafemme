@@ -1,4 +1,4 @@
-const CACHE_NAME = 'conectafemme-shell-v17';
+const CACHE_NAME = 'conectafemme-shell-v18';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -90,11 +90,16 @@ self.addEventListener('push', (event) => {
   }
 
   const title = typeof payload.title === 'string' ? payload.title : 'ConectaFemme';
+  const rescheduleUrl = typeof payload.rescheduleUrl === 'string' ? payload.rescheduleUrl : '';
+  const actions = Array.isArray(payload.actions)
+    ? payload.actions.filter((action) => action && action.action === 'reschedule' && typeof action.title === 'string').slice(0, 2)
+    : [];
   const options = {
     body: typeof payload.body === 'string' ? payload.body : 'Você tem uma nova atualização.',
     icon: '/assets/pwa-icon-192.png',
     badge: '/assets/pwa-icon-192.png',
-    data: { url: typeof payload.url === 'string' ? payload.url : '/' }
+    data: { url: typeof payload.url === 'string' ? payload.url : '/', rescheduleUrl },
+    ...(rescheduleUrl ? { actions: actions.length ? actions : [{ action: 'reschedule', title: 'Remarcar' }] } : {})
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
@@ -105,7 +110,9 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil((async () => {
     let target = new URL('/', self.location.origin);
     try {
-      const candidate = new URL(event.notification.data && event.notification.data.url || '/', self.location.origin);
+      const data = event.notification.data || {};
+      const requestedUrl = event.action === 'reschedule' && data.rescheduleUrl ? data.rescheduleUrl : data.url;
+      const candidate = new URL(requestedUrl || '/', self.location.origin);
       if (candidate.origin === self.location.origin) target = candidate;
     } catch {
       // Keep the default same-origin destination.

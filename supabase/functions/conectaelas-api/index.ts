@@ -476,7 +476,7 @@ async function handle(req: Request) {
         const sv = services.find((x: any) => Number(x.id) === Number(b.service_id));
         const other = people.find((x: any) => Number(x.id) === Number(client ? b.provider_id : b.client_id));
         const reviewed = reviews.some((review: any) => Number(review.booking_id) === Number(b.id));
-        return { id: b.id, status: b.status, day: sl?.day, hour: sl?.hour, title: sv?.title, price: sv?.price, provider_id: b.provider_id, other_name: other?.name ?? b.manual_client_name, other_whatsapp: other?.whatsapp ?? b.manual_client_whatsapp, reviewed, can_review: client && b.status === "concluido" && !reviewed };
+        return { id: b.id, status: b.status, slot_id: b.slot_id, day: sl?.day, hour: sl?.hour, title: sv?.title, price: sv?.price, provider_id: b.provider_id, other_name: other?.name ?? b.manual_client_name, other_whatsapp: other?.whatsapp ?? b.manual_client_whatsapp, reviewed, can_review: client && b.status === "concluido" && !reviewed };
       }).sort((a: any,b: any) => `${b.day} ${b.hour}`.localeCompare(`${a.day} ${a.hour}`));
     }
     case "booking_status": {
@@ -489,6 +489,19 @@ async function handle(req: Request) {
         if (status === "cancelado") await patch("slots", { id: idFilter(b.slot_id) }, { booked: false });
       }
       return { ok: 1 };
+    }
+    case "booking_reschedule": {
+      const me = await auth(req, ["client"]);
+      const bookingId = Number(input.id), newSlotId = Number(input.slot_id);
+      if (!Number.isSafeInteger(bookingId) || bookingId < 1 || !Number.isSafeInteger(newSlotId) || newSlotId < 1)
+        fail(400, "Escolha um horário disponível para remarcar.");
+      const result = await db("rpc/reschedule_conectafemme_booking", "POST", {}, {
+        p_booking_id: bookingId,
+        p_client_id: me.id,
+        p_new_slot_id: newSlotId,
+      });
+      if (!result || Number(result.booking_id) !== bookingId) fail(409, "Não foi possível concluir a remarcação. Tente novamente.");
+      return { ok: 1, ...result };
     }
     case "review_add": {
       const me = await auth(req, ["client"]);

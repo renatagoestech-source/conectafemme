@@ -4,6 +4,9 @@ import webpush from "npm:web-push@3.6.7";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const secrets = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}");
 const SERVICE_KEY = secrets.default ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+const RESEND_FROM_EMAIL = Deno.env.get("RESEND_FROM_EMAIL") ?? "";
+const APP_ORIGIN = (Deno.env.get("APP_ORIGIN") ?? "https://conectaelasapp.vercel.app").replace(/\/$/, "");
 
 class ApiError extends Error {
   status: number;
@@ -48,7 +51,13 @@ function saoPauloNow() {
     hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return { day: `${values.year}-${values.month}-${values.day}`, minutes: Number(values.hour) * 60 + Number(values.minute) };
+  const hour = Number(values.hour), minute = Number(values.minute);
+  return { day: `${values.year}-${values.month}-${values.day}`, hour, minute, minutes: hour * 60 + minute };
+}
+function nextDay(day: string) {
+  const date = new Date(`${day}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
 }
 function timeMinutes(value: unknown) {
   const match = String(value ?? "").match(/^(\d{1,2}):(\d{2})/);
@@ -60,26 +69,40 @@ function dateBr(value: unknown) {
   const parts = String(value ?? "").split("-");
   return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : String(value ?? "");
 }
+function htmlEscape(value: unknown) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
+}
+function claimKey(kind: string, channel: "push" | "email", booking: any, slot: any) {
+  return `${channel}:reminder:${kind}:${booking.id}:${slot.id}`;
+}
+async function claimEvent(eventKey: string) {
+  const claimed = await db("push_event_log", "POST", { on_conflict: "event_key" }, { event_key: eventKey }, "resolution=ignore-duplicates,return=representation");
+  return Array.isArray(claimed) && claimed.length > 0;
+}
+async function releaseEvent(eventKey: string) {
+  try { await del("push_event_log", { event_key: `eq.${eventKey}` }); } catch { /* retry cleanup is best effort */ }
+}
 
-async function sendReminder(booking: any, title: string, hour: string, day: string) {
+async function sendPush(booking: any, slot: any, title: string, body: string, kind: "day" | "30m") {
   const userId = Number(booking.client_id);
   const subscriptions = await get("push_subscriptions", {
     select: "endpoint,p256dh,auth", user_id: idFilter(userId), limit: "50",
   });
   if (!Array.isArray(subscriptions) || !subscriptions.length) return "unsubscribed";
-
-  const eventKey = `reminder:${booking.id}:${day}`;
-  const claimed = await db("push_event_log", "POST", { on_conflict: "event_key" }, { event_key: eventKey }, "resolution=ignore-duplicates,return=representation");
-  if (!Array.isArray(claimed) || !claimed.length) return "duplicate";
+  const eventKey = claimKey(kind, "push", booking, slot);
+  if (!await claimEvent(eventKey)) return "duplicate";
 
   try {
     const keys = await get("push_settings", { select: "public_key,private_key", name: "eq.vapid", limit: "1" });
     if (!Array.isArray(keys) || !keys[0]?.public_key || !keys[0]?.private_key) fail(503, "As chaves de notificação não estão configuradas.");
     webpush.setVapidDetails("mailto:conectafemmest@gmail.com", keys[0].public_key, keys[0].private_key);
+    const rescheduleUrl = `${APP_ORIGIN}/#/painel?remarcar=${encodeURIComponent(String(booking.id))}`;
     const payload = JSON.stringify({
-      title: "Lembrete: seu atendimento é hoje",
-      body: `${title} está agendado para hoje, ${dateBr(day)}, às ${hour}.`,
-      url: "/#/painel",
+      title,
+      body,
+      url: rescheduleUrl,
+      rescheduleUrl,
+      actions: [{ action: "reschedule", title: "Remarcar" }],
     });
     let failed = false;
     await Promise.all(subscriptions.map(async (subscription: any) => {
@@ -91,7 +114,7 @@ async function sendReminder(booking: any, title: string, hour: string, day: stri
       } catch (error) {
         const status = Number((error as any)?.statusCode ?? 0);
         if (status === 404 || status === 410) {
-          try { await del("push_subscriptions", { endpoint: `eq.${subscription.endpoint}`, user_id: idFilter(userId) }); } catch { /* limpeza best effort */ }
+          try { await del("push_subscriptions", { endpoint: `eq.${subscription.endpoint}`, user_id: idFilter(userId) }); } catch { /* cleanup is best effort */ }
         } else {
           failed = true;
           console.error("Reminder push failed", status || (error instanceof Error ? error.name : "UnknownError"));
@@ -99,14 +122,90 @@ async function sendReminder(booking: any, title: string, hour: string, day: stri
       }
     }));
     if (failed) {
-      await del("push_event_log", { event_key: `eq.${eventKey}` });
+      await releaseEvent(eventKey);
       return "failed";
     }
     return "sent";
   } catch (error) {
-    try { await del("push_event_log", { event_key: `eq.${eventKey}` }); } catch { /* retry cleanup best effort */ }
+    await releaseEvent(eventKey);
     throw error;
   }
+}
+
+async function sendEmail(booking: any, slot: any, client: any, title: string, subject: string, text: string, kind: "day" | "30m") {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) return "unconfigured";
+  if (!client?.email || client.is_demo) return "no_recipient";
+  const eventKey = claimKey(kind, "email", booking, slot);
+  if (!await claimEvent(eventKey)) return "duplicate";
+  const rescheduleUrl = `${APP_ORIGIN}/#/painel?remarcar=${encodeURIComponent(String(booking.id))}`;
+  const safeName = htmlEscape(client.name || "");
+  const safeTitle = htmlEscape(title);
+  const safeDay = htmlEscape(dateBr(slot.day));
+  const safeHour = htmlEscape(String(slot.hour));
+  const safeText = htmlEscape(text);
+  const html = `<div style="font-family:Arial,sans-serif;color:#38242a;line-height:1.6;max-width:600px;margin:auto"><h2 style="color:#7b1e3a">ConectaFemme</h2><p>Olá${safeName ? `, ${safeName}` : ""}.</p><p>${safeText}</p><p><strong>${safeTitle}</strong><br>${safeDay} às ${safeHour}</p><p>Se acontecer algum imprevisto, você pode escolher outro horário disponível:</p><p><a href="${htmlEscape(rescheduleUrl)}" style="display:inline-block;background:#7b1e3a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Remarcar atendimento</a></p></div>`;
+  try {
+    const result = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: `Bearer ${RESEND_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ from: RESEND_FROM_EMAIL, to: [client.email], subject, html, text: `${text}\n\n${title} — ${dateBr(slot.day)} às ${slot.hour}.\nRemarque: ${rescheduleUrl}` }),
+    });
+    if (!result.ok) {
+      console.error("Reminder email delivery failed", result.status);
+      await releaseEvent(eventKey);
+      return "failed";
+    }
+    return "sent";
+  } catch (error) {
+    await releaseEvent(eventKey);
+    console.error("Reminder email request failed", error instanceof Error ? error.name : "UnknownError");
+    return "failed";
+  }
+}
+
+function reminderContent(kind: "day" | "30m", title: string, hour: string) {
+  if (kind === "30m") {
+    const text = `Faltam 30 minutos para o seu atendimento. Não se atrase! ${title} às ${hour}.`;
+    return { pushTitle: "Seu atendimento começa em 30 minutos", pushBody: text, subject: "Seu atendimento começa em 30 minutos", emailText: text };
+  }
+  const text = `Lembrete: seu atendimento de ${title} é hoje às ${hour}.`;
+  return { pushTitle: "Lembrete: seu atendimento é hoje", pushBody: text, subject: "Lembrete do seu atendimento de hoje", emailText: text };
+}
+
+async function processReminders(kind: "day" | "30m", now: ReturnType<typeof saoPauloNow>, slotRows: any[], bookingRows: any[], servicesById: Map<number, string>, usersById: Map<number, any>) {
+  const slotsById = new Map(slotRows.map((slot: any) => [Number(slot.id), slot]));
+  let pushSent = 0, emailSent = 0, failed = 0;
+  for (const booking of bookingRows) {
+    if (booking.status !== "confirmado" || booking.client_id == null) continue;
+    const slot = slotsById.get(Number(booking.slot_id));
+    if (!slot) continue;
+    const appointmentMinutes = timeMinutes(slot.hour);
+    if (appointmentMinutes === null) continue;
+    if (kind === "day") {
+      if (slot.day !== now.day || now.hour !== 8 || now.minute > 5 || appointmentMinutes < now.minutes) continue;
+    } else {
+      const dayOffset = slot.day === now.day ? 0 : slot.day === nextDay(now.day) ? 1 : null;
+      if (dayOffset === null) continue;
+      const minutesUntil = dayOffset * 1440 + appointmentMinutes - now.minutes;
+      if (minutesUntil < 29 || minutesUntil > 30) continue;
+    }
+
+    const title = servicesById.get(Number(booking.service_id)) ?? "seu atendimento";
+    const client = usersById.get(Number(booking.client_id));
+    const content = reminderContent(kind, title, String(slot.hour));
+    try {
+      const [pushResult, emailResult] = await Promise.all([
+        sendPush(booking, slot, content.pushTitle, content.pushBody, kind),
+        sendEmail(booking, slot, client, title, content.subject, content.emailText, kind),
+      ]);
+      if (pushResult === "sent") pushSent++;
+      if (emailResult === "sent") emailSent++;
+      if (pushResult === "failed" || emailResult === "failed") failed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { pushSent, emailSent, failed };
 }
 
 Deno.serve(async (req: Request) => {
@@ -118,39 +217,37 @@ Deno.serve(async (req: Request) => {
     const secretIsValid = await db("rpc/check_conectafemme_reminder_secret", "POST", {}, { candidate });
     if (secretIsValid !== true) fail(401, "A autorização do agendador é inválida.");
 
+    const input = await req.json().catch(() => ({}));
+    const kind = input?.kind === "day" || input?.kind === "30m" ? input.kind : "30m";
     const now = saoPauloNow();
-    const slots = await get("slots", { select: "id,day,hour", day: `eq.${now.day}`, limit: "1000" });
+    if (kind === "day" && (now.hour !== 8 || now.minute > 5))
+      return response({ ok: true, skipped: "outside_0800", sent: 0, failed: 0 });
+
+    const days = [...new Set([now.day, nextDay(now.day)])];
+    const slots = await get("slots", { select: "id,day,hour", day: `in.(${days.join(",")})`, limit: "2000" });
     const slotRows = Array.isArray(slots) ? slots : [];
     const slotIds = slotRows.map((slot: any) => Number(slot.id)).filter((id: number) => Number.isInteger(id) && id > 0);
     if (!slotIds.length) return response({ ok: true, day: now.day, sent: 0, failed: 0 });
 
     const bookings = await get("bookings", {
       select: "id,slot_id,service_id,client_id,status", slot_id: `in.(${slotIds.join(",")})`,
-      status: "eq.confirmado", client_id: "not.is.null", limit: "1000",
+      status: "eq.confirmado", client_id: "not.is.null", limit: "2000",
     });
     const bookingRows = Array.isArray(bookings) ? bookings : [];
     const serviceIds = [...new Set(bookingRows.map((booking: any) => Number(booking.service_id)).filter((id: number) => Number.isInteger(id) && id > 0))];
-    const services = serviceIds.length
-      ? await get("services", { select: "id,title", id: `in.(${serviceIds.join(",")})`, limit: "1000" })
-      : [];
-    const slotsById = new Map(slotRows.map((slot: any) => [Number(slot.id), slot]));
+    const clientIds = [...new Set(bookingRows.map((booking: any) => Number(booking.client_id)).filter((id: number) => Number.isInteger(id) && id > 0))];
+    const [services, users] = await Promise.all([
+      serviceIds.length ? get("services", { select: "id,title", id: `in.(${serviceIds.join(",")})`, limit: "2000" }) : [],
+      clientIds.length ? get("users", { select: "id,name,email,is_demo", id: `in.(${clientIds.join(",")})`, limit: "2000" }) : [],
+    ]);
     const servicesById = new Map((Array.isArray(services) ? services : []).map((service: any) => [Number(service.id), service.title]));
-    let sent = 0, failed = 0;
+    const usersById = new Map((Array.isArray(users) ? users : []).map((user: any) => [Number(user.id), user]));
 
-    for (const booking of bookingRows) {
-      const slot = slotsById.get(Number(booking.slot_id));
-      const appointmentMinutes = timeMinutes(slot?.hour);
-      if (!slot || appointmentMinutes === null || appointmentMinutes <= now.minutes) continue;
-      const title = servicesById.get(Number(booking.service_id)) ?? "Seu procedimento";
-      try {
-        const result = await sendReminder(booking, title, String(slot.hour), now.day);
-        if (result === "sent") sent++;
-        if (result === "failed") failed++;
-      } catch {
-        failed++;
-      }
-    }
-    return response({ ok: true, day: now.day, sent, failed });
+    const results = kind === "day"
+      ? await processReminders("day", now, slotRows, bookingRows, servicesById, usersById)
+      : await processReminders("30m", now, slotRows, bookingRows, servicesById, usersById);
+    const emailsConfigured = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+    return response({ ok: true, day: now.day, ...results, emailConfiguration: emailsConfigured ? "ready" : "required" });
   } catch (error) {
     if (error instanceof ApiError) return response({ error: error.message }, error.status);
     console.error("ConectaFemme reminder error", error instanceof Error ? error.name : "UnknownError");
