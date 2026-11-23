@@ -347,8 +347,16 @@ async function provider(id) {
       if (!U || U.role !== 'client') { alert('Entre como cliente para agendar.'); location.hash = '#/login'; return; }
       if (!selectedService || !selectedSlot) { alert('Escolha serviço, dia e horário.'); return; }
       await api('book', { slot_id: selectedSlot, service_id: selectedService });
-      await pushApi('notify_booking', { slot_id: selectedSlot, service_id: selectedService }, true).catch((error) => console.warn('Não foi possível enviar o aviso de agendamento:', error));
-      alert('Agendado! Combine os detalhes pelo WhatsApp.');
+      let notification;
+      try {
+        notification = await pushApi('notify_booking', { slot_id: selectedSlot, service_id: selectedService }, true);
+      } catch (error) {
+        console.warn('Não foi possível enviar o aviso de agendamento:', error);
+      }
+      const providerNotified = notification?.providerPush && !notification.providerPush.skipped;
+      alert(providerNotified
+        ? 'Agendamento confirmado automaticamente! A profissional recebeu um aviso push. Combine os detalhes pelo WhatsApp.'
+        : 'Agendamento confirmado automaticamente! Não foi possível confirmar o aviso push à profissional; combine os detalhes pelo WhatsApp.');
       location.hash = '#/painel';
   };
 }
@@ -461,7 +469,7 @@ const cadastro = () => authForm(true);
 
 const statusLabel = (status) => ({ pendente: 'Pendente', confirmado: 'Confirmado', concluido: 'OK', cancelado: 'Cancelado' }[status] || status);
 function bookTable(bookings) {
-  return `<table><tr><th>Data</th><th>Serviço</th><th>${U.role === 'client' ? 'Profissional' : 'Cliente'}</th><th>Status</th><th></th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${booking.hour}</td><td>${esc(booking.title)}<br>${brl(booking.price)}</td><td>${esc(booking.other_name || 'Cliente')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td><td>${booking.other_whatsapp ? `<a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(booking.other_whatsapp, `Olá! Sobre o agendamento de ${booking.title} em ${fd(booking.day)} às ${booking.hour}.`)}">WhatsApp</a>` : ''}${U.role === 'client' && booking.status === 'confirmado' ? ` <button class="btn out sm" type="button" data-reschedule-id="${Number(booking.id)}">Remarcar</button>` : ''}${U.role === 'client' && booking.can_review ? ` <button class="btn sm" onclick="rateBooking(${booking.id})">Avaliar</button>` : ''}${U.role === 'provider' && booking.status === 'pendente' ? ` <button class="btn sm" onclick="st(${booking.id},'confirmado')">Confirmar</button>` : ''}${booking.status !== 'cancelado' && booking.status !== 'concluido' ? ` <button class="btn red sm" onclick="st(${booking.id},'cancelado')">Cancelar</button>` : ''}</td></tr>`).join('')}</table>`;
+  return `<table><tr><th>Data</th><th>Serviço</th><th>${U.role === 'client' ? 'Profissional' : 'Cliente'}</th><th>Status</th><th></th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${booking.hour}</td><td>${esc(booking.title)}<br>${brl(booking.price)}</td><td>${esc(booking.other_name || 'Cliente')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td><td>${booking.other_whatsapp ? `<a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(booking.other_whatsapp, `Olá! Sobre o agendamento de ${booking.title} em ${fd(booking.day)} às ${booking.hour}.`)}">WhatsApp</a>` : ''}${booking.status === 'confirmado' ? ` <button class="btn out sm" type="button" data-reschedule-id="${Number(booking.id)}">Remarcar</button>` : ''}${U.role === 'client' && booking.can_review ? ` <button class="btn sm" onclick="rateBooking(${booking.id})">Avaliar</button>` : ''}${booking.status !== 'cancelado' && booking.status !== 'concluido' ? ` <button class="btn red sm" onclick="st(${booking.id},'cancelado')">Cancelar</button>` : ''}</td></tr>`).join('')}</table>`;
 }
 
 function rescheduleDialogMarkup() {
@@ -482,8 +490,15 @@ window.rateBooking = async (id) => {
 };
 window.st = async (id, status) => {
   await api('booking_status', { id, status });
-  if (['confirmado', 'cancelado'].includes(status))
-    await pushApi('notify_status', { id, status }, true).catch((error) => console.warn('Não foi possível enviar o aviso de alteração:', error));
+  if (status === 'cancelado') {
+    try {
+      const notification = await pushApi('notify_status', { id, status }, true);
+      if (notification?.skipped) alert('Atendimento cancelado, mas a outra parte não tem uma assinatura push ativa. Avise-a pelo WhatsApp.');
+    } catch (error) {
+      console.warn('Não foi possível enviar o aviso de alteração:', error);
+      alert('Atendimento cancelado, mas não foi possível enviar a notificação push. Avise a outra parte pelo WhatsApp.');
+    }
+  }
   painel();
 };
 
@@ -500,7 +515,7 @@ function clearRescheduleIntent() {
 }
 
 function setupClientReschedule(bookings) {
-  window._clientBookings = bookings;
+  window._activeBookings = bookings;
   const dialog = $('#reschedule-dialog');
   dialog?.addEventListener('close', () => {
     sessionStorage.removeItem('pending-reschedule');
@@ -517,9 +532,10 @@ function setupClientReschedule(bookings) {
 }
 
 async function openRescheduleDialog(id) {
-  if (!U || U.role !== 'client') return;
-  const booking = (window._clientBookings || []).find((item) => Number(item.id) === Number(id));
-  if (!booking || booking.status !== 'confirmado') {
+  if (!U || !['client', 'provider'].includes(U.role)) return;
+  const booking = (window._activeBookings || []).find((item) => Number(item.id) === Number(id));
+  const isParty = booking && (U.role === 'client' ? Number(booking.client_id) === Number(U.id) : Number(booking.provider_id) === Number(U.id));
+  if (!booking || !isParty || booking.status !== 'confirmado') {
     alert('Este atendimento não está mais disponível para remarcação. Atualize seus agendamentos.');
     clearRescheduleIntent();
     return;
@@ -530,7 +546,7 @@ async function openRescheduleDialog(id) {
   const feedback = $('#reschedule-feedback');
   if (!dialog || !select || !confirmButton) return;
   $('#reschedule-close').onclick = () => dialog.close();
-  $('#reschedule-current').textContent = `${booking.title || 'Atendimento'} com ${booking.other_name || 'a profissional'} — ${fd(booking.day)} às ${booking.hour}.`;
+  $('#reschedule-current').textContent = `${booking.title || 'Atendimento'} com ${booking.other_name || (U.role === 'client' ? 'a profissional' : 'a cliente')} — ${fd(booking.day)} às ${booking.hour}.`;
   select.innerHTML = '<option value="">Carregando horários...</option>';
   confirmButton.disabled = true;
   feedback.textContent = '';
@@ -544,7 +560,7 @@ async function openRescheduleDialog(id) {
     const slots = (profile.slots || []).filter((slot) => {
       const hour = String(slot.hour || '').slice(0, 5);
       const [hours, minutes] = hour.split(':').map(Number);
-      return Number(slot.id) !== Number(booking.slot_id)
+      return Number(slot.id) !== Number(booking.slot_id) && !slot.booked && slot.available !== false
         && (slot.day > todayInBrazil() || (slot.day === todayInBrazil() && hours * 60 + minutes > currentMinutes));
     }).sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`));
     if (!slots.length) {
@@ -577,17 +593,18 @@ async function openRescheduleDialog(id) {
     try {
       notification = await pushApi('notify_reschedule', { id: Number(booking.id) }, true);
     } catch (error) {
-      console.warn('Remarcação salva, mas o aviso à profissional falhou:', error);
+      console.warn('Remarcação salva, mas o aviso à outra parte falhou:', error);
     }
     dialog.close();
     sessionStorage.removeItem('pending-reschedule');
     if (rescheduleIdFromHash()) location.hash = '#/painel';
     let message = 'O atendimento foi remarcado.';
     const notified = Boolean(notification?.push && !notification.push.skipped) || Boolean(notification?.email?.sent);
+    const otherParty = U.role === 'client' ? 'A profissional' : 'A cliente';
     if (notified) message += notification.email?.sent
-      ? ' A profissional foi avisada por notificação e e-mail.'
-      : ' A profissional foi avisada por notificação no app.';
-    else message += ' Não foi possível confirmar o aviso automático; entre em contato com a profissional pelo WhatsApp.';
+      ? ` ${otherParty} foi avisada por notificação e e-mail.`
+      : ` ${otherParty} foi avisada por notificação no app.`;
+    else message += ` Não foi possível confirmar o aviso automático; entre em contato com ${U.role === 'client' ? 'a profissional' : 'a cliente'} pelo WhatsApp.`;
     if (notification?.email?.reason === 'email_not_configured') message += ' O envio de e-mail ainda depende da configuração do remetente da plataforma.';
     if (notification?.email?.reason === 'delivery_failed') message += ' O e-mail de aviso não foi aceito pelo serviço de envio.';
     alert(message);
@@ -803,7 +820,7 @@ async function painel(tab = 'ag') {
   const profileLink = publicProfileUrl(U.id);
   const selectedSpecialties = specialtyList(me);
   const tabs = {
-    ag: `${buildManualBookingForm(services, slots)}<div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Sem agendamentos ainda.</p>'}</div>`,
+    ag: `${buildManualBookingForm(services, slots)}<div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Sem agendamentos ainda.</p>'}</div>${rescheduleDialogMarkup()}`,
     perfil: `<div class="box"><h3>Seu perfil público</h3><p class="muted">Envie este link às suas clientes para elas verem seus serviços e agendarem.</p><div class="share-link-row"><input id="public-link" readonly value="${esc(profileLink)}"><button class="btn" id="copy-link" type="button">Copiar link público</button></div>
       <label>Nome do estabelecimento</label><input id="n" value="${esc(me.name)}"><label>WhatsApp</label><input id="w" value="${esc(me.whatsapp)}"><div class="specialty-grid"><label>Especialidade principal<select id="c1" required>${specialtyOptions(categories, selectedSpecialties[0] || me.category || '')}</select></label><label>Segunda especialidade (opcional)<select id="c2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="profile-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option ${state === me.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="ci" value="${esc(me.city)}" autocomplete="address-level2"></label></div>
       <label>Instagram</label><input id="instagram" type="url" placeholder="https://www.instagram.com/seuperfil" value="${esc(me.instagram_url || '')}">
@@ -820,6 +837,7 @@ async function painel(tab = 'ag') {
   };
   app.innerHTML = `<h2>Painel do profissional</h2><div class="tabs no-print">${[['ag','Agendamentos'],['perfil','Perfil público'],['serv','Serviços'],['expediente','Expediente'],['agenda','Agenda'],['clientes','Clientes'],['financeiro','Financeiro']].map(([key, label]) => `<button class="${key === tab ? 'on' : ''}" onclick="painel('${key}')">${label}</button>`).join('')}</div>${tabs[tab] || tabs.ag}`;
   const on = (selector, handler) => { if ($(selector)) $(selector).onclick = handler; };
+  if (tab === 'ag') setupClientReschedule(bookings);
 
   if (tab === 'clientes') {
     on('#save-aftercare', () => {

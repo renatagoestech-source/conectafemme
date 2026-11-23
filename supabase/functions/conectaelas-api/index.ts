@@ -423,7 +423,7 @@ async function handle(req: Request) {
       if (!sv) fail(400, "Horário indisponível");
       const booked = await patch("slots", { id: idFilter(sl.id), booked: "eq.false", available: "eq.true" }, { booked: true });
       if (!booked.length) fail(400, "Horário acabou de ser reservado");
-      await post("bookings", { slot_id: sl.id, service_id: sv.id, client_id: me.id, provider_id: sl.provider_id });
+      await post("bookings", { slot_id: sl.id, service_id: sv.id, client_id: me.id, provider_id: sl.provider_id, status: "confirmado" });
       return { ok: 1 };
     }
     case "manual_book": {
@@ -437,7 +437,7 @@ async function handle(req: Request) {
       if (!sv) fail(400, "Escolha um serviço seu.");
       const updated = await patch("slots", { id: idFilter(sl.id), provider_id: idFilter(me.id), booked: "eq.false", available: "eq.true" }, { booked: true });
       if (!updated.length) fail(400, "Esse horário acabou de ser reservado.");
-      await post("bookings", { slot_id: sl.id, service_id: sv.id, client_id: null, provider_id: me.id, manual_client_name: name, manual_client_whatsapp: whatsapp });
+      await post("bookings", { slot_id: sl.id, service_id: sv.id, client_id: null, provider_id: me.id, manual_client_name: name, manual_client_whatsapp: whatsapp, status: "confirmado" });
       return { ok: 1 };
     }
     case "payments": {
@@ -476,28 +476,32 @@ async function handle(req: Request) {
         const sv = services.find((x: any) => Number(x.id) === Number(b.service_id));
         const other = people.find((x: any) => Number(x.id) === Number(client ? b.provider_id : b.client_id));
         const reviewed = reviews.some((review: any) => Number(review.booking_id) === Number(b.id));
-        return { id: b.id, status: b.status, slot_id: b.slot_id, day: sl?.day, hour: sl?.hour, title: sv?.title, price: sv?.price, provider_id: b.provider_id, other_name: other?.name ?? b.manual_client_name, other_whatsapp: other?.whatsapp ?? b.manual_client_whatsapp, reviewed, can_review: client && b.status === "concluido" && !reviewed };
+        return { id: b.id, status: b.status, slot_id: b.slot_id, client_id: b.client_id, provider_id: b.provider_id, day: sl?.day, hour: sl?.hour, title: sv?.title, price: sv?.price, other_name: other?.name ?? b.manual_client_name, other_whatsapp: other?.whatsapp ?? b.manual_client_whatsapp, reviewed, can_review: client && b.status === "concluido" && !reviewed };
       }).sort((a: any,b: any) => `${b.day} ${b.hour}`.localeCompare(`${a.day} ${a.hour}`));
     }
     case "booking_status": {
-      const me = await auth(req, ["client","provider"]), status = ["confirmado","cancelado"].includes(input.status) ? input.status : "pendente";
-      const client = me.role === "client";
-      if (client && status !== "cancelado") fail(403, "Sem permissão");
-      const b = first(await get("bookings", { select: "slot_id", id: idFilter(input.id), [client ? "client_id" : "provider_id"]: idFilter(me.id), limit: "1" }));
-      if (b) {
-        await patch("bookings", { id: idFilter(input.id), [client ? "client_id" : "provider_id"]: idFilter(me.id) }, { status });
-        if (status === "cancelado") await patch("slots", { id: idFilter(b.slot_id) }, { booked: false });
-      }
-      return { ok: 1 };
+      const me = await auth(req, ["client", "provider"]);
+      if (input.status !== "cancelado") fail(400, "A única alteração disponível por esta ação é cancelar o atendimento.");
+      const bookingId = Number(input.id);
+      if (!Number.isSafeInteger(bookingId) || bookingId < 1) fail(400, "Agendamento inválido.");
+      const result = await db("rpc/cancel_conectafemme_booking_by_party", "POST", {}, {
+        p_booking_id: bookingId,
+        p_actor_id: me.id,
+        p_actor_role: me.role,
+      });
+      if (!result || Number(result.booking_id) !== bookingId || result.status !== "cancelado")
+        fail(409, "Não foi possível cancelar o atendimento. Atualize o painel e tente novamente.");
+      return { ok: 1, ...result };
     }
     case "booking_reschedule": {
-      const me = await auth(req, ["client"]);
+      const me = await auth(req, ["client", "provider"]);
       const bookingId = Number(input.id), newSlotId = Number(input.slot_id);
       if (!Number.isSafeInteger(bookingId) || bookingId < 1 || !Number.isSafeInteger(newSlotId) || newSlotId < 1)
         fail(400, "Escolha um horário disponível para remarcar.");
-      const result = await db("rpc/reschedule_conectafemme_booking", "POST", {}, {
+      const result = await db("rpc/reschedule_conectafemme_booking_by_party", "POST", {}, {
         p_booking_id: bookingId,
-        p_client_id: me.id,
+        p_actor_id: me.id,
+        p_actor_role: me.role,
         p_new_slot_id: newSlotId,
       });
       if (!result || Number(result.booking_id) !== bookingId) fail(409, "Não foi possível concluir a remarcação. Tente novamente.");
