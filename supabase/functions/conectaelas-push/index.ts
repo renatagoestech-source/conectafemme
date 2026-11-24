@@ -132,6 +132,7 @@ async function sendPushToUser(userId: unknown, payload: { title: string; body: s
     } catch (error) {
       const status = Number((error as any)?.statusCode ?? 0);
       if (status === 404 || status === 410) {
+        allSent = false;
         try { await del("push_subscriptions", { endpoint: `eq.${subscription.endpoint}`, user_id: idFilter(id) }); } catch { /* cleanup is best effort */ }
       } else {
         allSent = false;
@@ -165,6 +166,35 @@ async function dispatchEvent(eventKey: string, recipientId: unknown, payload: { 
   }
 }
 
+async function sendBookingEmail(eventKey: string, recipient: any, subject: string, text: string) {
+  if (!recipient?.email) return { skipped: true, reason: "email_unavailable" };
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) return { skipped: true, reason: "email_not_configured" };
+  const claimed = await db("push_event_log", "POST", { on_conflict: "event_key" }, { event_key: eventKey }, "resolution=ignore-duplicates,return=representation");
+  if (!Array.isArray(claimed) || !claimed.length) return { skipped: true, reason: "duplicate" };
+  const safe = (value: unknown) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
+  try {
+    const result = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: `Bearer ${RESEND_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: RESEND_FROM_EMAIL,
+        to: [recipient.email],
+        subject,
+        text,
+        html: `<div style="font-family:Arial,sans-serif;color:#38242a;line-height:1.6"><h2 style="color:#7b1e3a">ConectaFemme</h2><p>${safe(text)}</p><p><a href="${safe(APP_ORIGIN)}/#/painel">Abrir painel</a></p></div>`,
+      }),
+    });
+    if (!result.ok) {
+      try { await del("push_event_log", { event_key: `eq.${eventKey}` }); } catch { /* permite nova tentativa */ }
+      return { skipped: true, reason: "delivery_failed" };
+    }
+    return { sent: true };
+  } catch {
+    try { await del("push_event_log", { event_key: `eq.${eventKey}` }); } catch { /* permite nova tentativa */ }
+    return { skipped: true, reason: "delivery_failed" };
+  }
+}
+
 async function notifyBooking(req: Request, input: any) {
   const me = await authenticate(req, ["client"]);
   const slotId = Number(input.slot_id), serviceId = Number(input.service_id);
@@ -174,26 +204,34 @@ async function notifyBooking(req: Request, input: any) {
     client_id: idFilter(me.id), slot_id: idFilter(slotId), service_id: idFilter(serviceId), status: "eq.confirmado",
     order: "created.desc", limit: "1",
   }));
-  if (!booking) return { ok: 1, skipped: true };
-  const [slot, service] = await Promise.all([
+  if (!booking) return { ok: 1, skipped: true, reason: "booking_not_found" };
+  const [slot, service, clientRows, providerRows] = await Promise.all([
     get("slots", { select: "day,hour", id: idFilter(Number(booking.slot_id)), limit: "1" }),
     get("services", { select: "title", id: idFilter(Number(booking.service_id)), limit: "1" }),
+    get("users", { select: "id,name,email", id: idFilter(Number(booking.client_id)), limit: "1" }),
+    get("users", { select: "id,name,email", id: idFilter(Number(booking.provider_id)), limit: "1" }),
   ]);
   const title = service[0]?.title ?? "Atendimento";
   const when = `${dateBr(slot[0]?.day)} às ${slot[0]?.hour ?? ""}`;
-  const [providerPush, clientPush] = await Promise.all([
-    dispatchEvent(`booking:${booking.id}:provider`, booking.provider_id, {
-      title: "Novo atendimento confirmado",
-      body: `${title} com cliente confirmado para ${when}.`,
-      url: "/#/painel",
-    }),
-    dispatchEvent(`booking:${booking.id}:client`, booking.client_id, {
-      title: "Agendamento confirmado",
-      body: `${title} confirmado para ${when}.`,
-      url: "/#/painel",
-    }),
-  ]);
-  return { ok: 1, providerPush, clientPush };
+  const recipients = [
+    { role: "provider", user: providerRows[0], payload: { title: "Novo atendimento confirmado", body: `${title} com cliente confirmado para ${when}.`, url: "/#/painel" } },
+    { role: "client", user: clientRows[0], payload: { title: "Agendamento confirmado", body: `${title} confirmado para ${when}.`, url: "/#/painel" } },
+  ];
+  const outcomes = await Promise.all(recipients.map(async ({ role, user, payload }) => {
+    let push: any;
+    try {
+      push = await dispatchEvent(`booking:${booking.id}:${role}`, user?.id, payload);
+    } catch (error) {
+      console.error(`Booking push failed for ${role}`, error instanceof Error ? error.name : "UnknownError");
+      push = { skipped: true, reason: "delivery_failed" };
+    }
+    const pushDelivered = !push?.skipped && !push?.duplicate;
+    const email = pushDelivered || push?.duplicate
+      ? { skipped: true, reason: push?.duplicate ? "already_notified" : "push_delivered" }
+      : await sendBookingEmail(`email:booking:${booking.id}:${role}`, user, payload.title, payload.body);
+    return { push, email };
+  }));
+  return { ok: 1, providerPush: outcomes[0].push, providerEmail: outcomes[0].email, clientPush: outcomes[1].push, clientEmail: outcomes[1].email };
 }
 
 async function notifyStatus(req: Request, input: any) {

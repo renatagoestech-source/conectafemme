@@ -353,10 +353,13 @@ async function provider(id) {
       } catch (error) {
         console.warn('Não foi possível enviar o aviso de agendamento:', error);
       }
-      const providerNotified = notification?.providerPush && !notification.providerPush.skipped;
-      alert(providerNotified
-        ? 'Agendamento confirmado automaticamente! A profissional recebeu um aviso push. Combine os detalhes pelo WhatsApp.'
-        : 'Agendamento confirmado automaticamente! Não foi possível confirmar o aviso push à profissional; combine os detalhes pelo WhatsApp.');
+      const deliveryLabel = (push, email) => email?.sent
+        ? 'e-mail'
+        : push && (!push.skipped || push.duplicate) ? 'push' : 'não confirmada';
+      const providerDelivery = deliveryLabel(notification?.providerPush, notification?.providerEmail);
+      const clientDelivery = deliveryLabel(notification?.clientPush, notification?.clientEmail);
+      const needsActivation = providerDelivery === 'não confirmada' || clientDelivery === 'não confirmada';
+      alert(`Agendamento confirmado automaticamente. Aviso para a profissional: ${providerDelivery}. Aviso para você: ${clientDelivery}.${needsActivation ? ' Para receber avisos push, cliente e profissional precisam ativar “Ativar notificações” no site; se o e-mail alternativo não estiver configurado, combinem os detalhes pelo WhatsApp.' : ' Combine os detalhes pelo WhatsApp.'}`);
       location.hash = '#/painel';
   };
 }
@@ -704,8 +707,24 @@ function agendaReportMarkup(bookings, view, anchor) {
   const labels = { day: 'Dia', week: 'Semana', month: 'Mês' };
   const rows = bookings.filter((booking) => booking.day >= range.start && booking.day <= range.end)
     .sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`));
+  const selectedRows = bookings.filter((booking) => booking.day === anchor)
+    .sort((a, b) => String(a.hour || '').localeCompare(String(b.hour || '')));
+  const monthStart = `${anchor.slice(0, 7)}-01`;
+  const monthDate = new Date(`${monthStart}T12:00:00Z`);
+  const monthTitle = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(monthDate);
+  const monthOffset = (monthDate.getUTCDay() + 6) % 7;
+  const weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+  const calendarCells = Array.from({ length: 42 }, (_, index) => {
+    const day = dateAfter(monthStart, index - monthOffset);
+    const count = bookings.filter((booking) => booking.day === day).length;
+    const inMonth = day.slice(0, 7) === monthStart.slice(0, 7);
+    return `<button class="agenda-day ${inMonth ? '' : 'is-outside'} ${count ? 'has-appointments' : ''} ${day === anchor ? 'is-selected' : ''}" type="button" data-agenda-day="${day}" aria-pressed="${day === anchor}" aria-label="${fd(day)}, ${count} ${count === 1 ? 'atendimento' : 'atendimentos'}"><span class="agenda-day-number">${Number(day.slice(8, 10))}</span>${count ? `<small class="agenda-day-count">${count} ${count === 1 ? 'atend.' : 'atends.'}</small>` : '<small class="agenda-day-count is-empty">&nbsp;</small>'}</button>`;
+  }).join('');
+  const selectedRowsMarkup = selectedRows.length
+    ? `<div class="agenda-day-list">${selectedRows.map((booking) => `<article class="agenda-day-appointment"><time>${esc(booking.hour || '')}</time><div><strong>${esc(booking.title || 'Atendimento')}</strong><span>${esc(booking.other_name || 'Cliente')}</span></div><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></article>`).join('')}</div>`
+    : '<p class="muted agenda-day-empty">Nenhum atendimento neste dia.</p>';
   const printRows = rows.map((booking) => `<tr><td>${fd(booking.day)} ${esc(booking.hour)}</td><td>${esc(booking.title || 'Atendimento')}</td><td>${esc(booking.other_name || 'Cliente')}</td><td>${esc(booking.other_whatsapp || '—')}</td><td>${statusLabel(booking.status)}</td><td>${brl(booking.price)}</td></tr>`).join('');
-  return `<div class="box no-print"><h3>Agenda de atendimentos</h3><p class="muted">Escolha o período para consultar e imprimir seus atendimentos.</p><div class="agenda-filters"><label>Visualizar por<select id="agenda-view">${Object.entries(labels).map(([value, label]) => `<option value="${value}" ${view === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Data de referência<input id="agenda-date" type="date" value="${esc(anchor)}"></label><button class="btn" id="agenda-apply" type="button">Aplicar período</button><button class="btn out" id="agenda-print" type="button">Imprimir atendimentos</button></div></div>
+  return `<div class="box no-print"><h3>Agenda de atendimentos</h3><p class="muted">Veja o mês completo e selecione um dia para consultar os atendimentos.</p><section class="agenda-calendar" aria-label="Calendário mensal de atendimentos"><div class="agenda-calendar-top"><button class="btn out sm" id="agenda-prev-month" type="button" aria-label="Mês anterior">‹</button><h3 aria-live="polite">${esc(monthTitle)}</h3><button class="btn out sm" id="agenda-next-month" type="button" aria-label="Próximo mês">›</button></div><div class="agenda-month-grid" role="grid">${weekdays.map((day) => `<span class="agenda-weekday" role="columnheader">${day}</span>`).join('')}${calendarCells}</div></section><section class="agenda-selected-day" aria-live="polite"><div class="agenda-selected-heading"><h4>Atendimentos em ${fd(anchor)}</h4><span class="admin-count">${selectedRows.length}</span></div>${selectedRowsMarkup}</section><div class="agenda-filters"><label>Imprimir por<select id="agenda-view">${Object.entries(labels).map(([value, label]) => `<option value="${value}" ${view === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Data de referência<input id="agenda-date" type="date" value="${esc(anchor)}"></label><button class="btn" id="agenda-apply" type="button">Aplicar período</button><button class="btn out" id="agenda-print" type="button">Imprimir atendimentos</button></div></div>
     <section class="box print-report"><div class="report-heading"><div><span class="eyebrow">CONECTAFEMME · AGENDA</span><h3>Atendimentos — ${labels[view].toLocaleLowerCase('pt-BR')}</h3><p>${fd(range.start)}${range.end !== range.start ? ` a ${fd(range.end)}` : ''}</p></div><strong>${rows.length} ${rows.length === 1 ? 'atendimento' : 'atendimentos'}</strong></div>
     ${rows.length ? `<table><thead><tr><th>Data e hora</th><th>Serviço</th><th>Cliente</th><th>WhatsApp</th><th>Status</th><th>Valor</th></tr></thead><tbody>${printRows}</tbody></table>` : '<p class="muted">Nenhum atendimento neste período.</p>'}</section>`;
 }
@@ -831,7 +850,7 @@ async function painel(tab = 'ag') {
     expediente: `<div class="box"><h3>Expediente semanal</h3><p class="muted">Selecione os dias e inclua horários. Você pode editá-los quando quiser.</p><div class="week-schedule">${weeklyScheduleEditor(me.weekly_schedule || {})}</div><br><button class="btn" id="save-weekly">Salvar expediente</button></div>
       <div class="box"><h3>Horários extras para uma data</h3><p class="muted">Adicione disponibilidades avulsas sem alterar seu expediente semanal.</p><div class="manual-booking-grid"><label>Data<input id="extra-day" type="date" min="${todayInBrazil()}"></label><div><label>Horários disponíveis</label><div id="extra-times" class="availability-times"></div><button class="btn out sm" id="extra-time-add" type="button">Adicionar horário</button></div></div><br><button class="btn" id="add-extra">Salvar horários extras</button></div>
       ${futureAvailabilityMarkup(slots)}`,
-    agenda: agendaReportMarkup(bookings, window._agendaSelection?.view || 'day', window._agendaSelection?.date || todayInBrazil()),
+    agenda: agendaReportMarkup(bookings, window._agendaSelection?.view || 'month', window._agendaSelection?.date || todayInBrazil()),
     clientes: clientsTabMarkup(bookings, U.id, me.name || ''),
     financeiro: financeMarkup(),
   };
@@ -870,6 +889,21 @@ async function painel(tab = 'ag') {
   }
 
   if (tab === 'agenda') {
+    document.querySelectorAll('[data-agenda-day]').forEach((button) => {
+      button.onclick = () => {
+        window._agendaSelection = { view: window._agendaSelection?.view || 'month', date: button.dataset.agendaDay };
+        painel('agenda');
+      };
+    });
+    const moveAgendaMonth = (offset) => {
+      const current = window._agendaSelection?.date || todayInBrazil();
+      const firstDay = new Date(`${current.slice(0, 7)}-01T12:00:00Z`);
+      firstDay.setUTCMonth(firstDay.getUTCMonth() + offset);
+      window._agendaSelection = { view: window._agendaSelection?.view || 'month', date: firstDay.toISOString().slice(0, 10) };
+      painel('agenda');
+    };
+    on('#agenda-prev-month', () => moveAgendaMonth(-1));
+    on('#agenda-next-month', () => moveAgendaMonth(1));
     on('#agenda-apply', () => {
       const date = $('#agenda-date').value;
       if (!date) return alert('Escolha uma data para consultar a agenda.');
@@ -1095,12 +1129,15 @@ async function admin(tab = 'd') {
   const professionals = users.filter((user) => user.role === 'provider');
   const clients = users.filter((user) => user.role === 'client');
   const userTable = (people, title, empty) => `<div class="box admin-user-group"><div class="admin-group-heading"><h3>${title}</h3><span class="admin-count">${people.length} cadastro${people.length === 1 ? '' : 's'}</span></div>${people.length ? `<table><tr><th>Nome</th><th>Especialidade</th><th>Localização</th><th>E-mail</th><th>WhatsApp</th><th></th></tr>${people.map((user) => `<tr><td>${esc(user.name)} ${user.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}</td><td>${user.role === 'provider' ? esc(specialtyList(user).join(' · ') || 'Sem categoria') : '—'}</td><td>${esc([user.city, user.state].filter(Boolean).join(' · ') || '—')}</td><td>${esc(user.email)}</td><td>${esc(user.whatsapp)}</td><td><button class="btn red sm" onclick="adel(${user.id})">Excluir</button></td></tr>`).join('')}</table>` : `<p class="muted">${empty}</p>`}</div>`;
+  const adminBookingTable = (items, title, empty) => `<section class="box admin-booking-group"><div class="admin-group-heading"><h3>${title}</h3><span class="admin-count">${items.length} agendamento${items.length === 1 ? '' : 's'}</span></div>${items.length ? `<table><thead><tr><th>Data</th><th>Serviço</th><th>Cliente</th><th>Profissional</th><th>Status</th></tr></thead><tbody>${items.map((booking) => `<tr><td>${fd(booking.day)} ${esc(booking.hour)}</td><td>${esc(booking.title || 'Atendimento')}</td><td>${esc(booking.client || 'Cliente')}</td><td>${esc(booking.provider || 'Profissional')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td></tr>`).join('')}</tbody></table>` : `<p class="muted">${empty}</p>`}</section>`;
+  const onlineBookings = bookings.filter((booking) => booking.source === 'site' || Number(booking.client_id) > 0);
+  const professionalBookings = bookings.filter((booking) => booking.source === 'professional' || !Number(booking.client_id));
   const content = {
     d: adminDashboardMarkup(users, clients, professionals),
     p: userTable(professionals, 'Profissionais', 'Nenhum profissional cadastrado. Os perfis DEMO ficam nesta aba para exclusão posterior.'),
     c: userTable(clients, 'Clientes', 'Nenhum cliente cadastrado.'),
     k: `<div class="box"><div class="bar"><input id="nc" placeholder="Nova categoria"><button class="btn" id="ac">Adicionar</button></div><br>${categories.map((category) => `<span class="tag">${esc(category)} <a href="#" onclick="acd('${esc(category)}');return false">✕</a></span> `).join('')}</div>`,
-    b: `<div class="box"><table><tr><th>Data</th><th>Serviço</th><th>Cliente</th><th>Profissional</th><th>Status</th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${esc(booking.hour)}</td><td>${esc(booking.title)}</td><td>${esc(booking.client || 'Agendamento manual')}</td><td>${esc(booking.provider)}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td></tr>`).join('')}</table></div>`,
+    b: `<p class="muted admin-bookings-intro">Consulte separadamente os agendamentos feitos por clientes com conta no site e os atendimentos anotados manualmente pelos profissionais.</p>${adminBookingTable(onlineBookings, 'Clientes que agendaram pelo site', 'Nenhuma reserva feita por clientes pelo site.')}${adminBookingTable(professionalBookings, 'Agendamentos adicionados pelos profissionais', 'Nenhum atendimento adicionado manualmente por profissionais.')}`,
     s: `<div class="box security-box"><h3>Alterar senha administrativa</h3><p class="muted">Use esta área para trocar a senha do acesso administrativo. A senha atual é necessária e a nova senha deve ter pelo menos 8 caracteres.</p><label>Senha atual</label><input id="admin-current-password" type="password" autocomplete="current-password"><label>Nova senha</label><input id="admin-new-password" type="password" minlength="8" autocomplete="new-password"><label>Confirmar nova senha</label><input id="admin-confirm-password" type="password" minlength="8" autocomplete="new-password"><br><br><button class="btn" id="change-admin-password" type="button">Salvar nova senha</button></div>`,
   };
   app.innerHTML = `<section class="admin-heading"><div class="admin-heading-copy"><span class="eyebrow">PAINEL DE CONTROLE</span><h2>Administração</h2><p class="muted">Acompanhe a comunidade e a operação do ConectaFemme.</p></div></section><div class="tabs admin-tabs">${[['d','Dashboard'],['p','Profissionais'],['c','Clientes'],['k','Categorias'],['b','Agendamentos'],['s','Segurança']].map(([key,label]) => `<button class="${key === tab ? 'on' : ''}" onclick="admin('${key}')">${label}</button>`).join('')}</div>${content[tab] || content.d}`;

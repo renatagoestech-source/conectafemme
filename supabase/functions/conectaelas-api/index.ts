@@ -574,7 +574,7 @@ async function handle(req: Request) {
         relatedUsers([...new Set<number>(rows.flatMap((r: any) => [Number(r.client_id),Number(r.provider_id)]))]),
       ]);
       await completeExpiredBookings(rows, slots);
-      return rows.map((b: any) => ({ id:b.id, status:b.status, day:slots.find((x:any)=>Number(x.id)===Number(b.slot_id))?.day, hour:slots.find((x:any)=>Number(x.id)===Number(b.slot_id))?.hour, title:services.find((x:any)=>Number(x.id)===Number(b.service_id))?.title, client:people.find((x:any)=>Number(x.id)===Number(b.client_id))?.name ?? b.manual_client_name, provider:people.find((x:any)=>Number(x.id)===Number(b.provider_id))?.name }));
+      return rows.map((b: any) => ({ id:b.id, status:b.status, client_id:b.client_id, source:b.client_id ? "site" : "professional", day:slots.find((x:any)=>Number(x.id)===Number(b.slot_id))?.day, hour:slots.find((x:any)=>Number(x.id)===Number(b.slot_id))?.hour, title:services.find((x:any)=>Number(x.id)===Number(b.service_id))?.title, client:people.find((x:any)=>Number(x.id)===Number(b.client_id))?.name ?? b.manual_client_name, provider:people.find((x:any)=>Number(x.id)===Number(b.provider_id))?.name }));
     }
     default: fail(404, "Ação inválida");
   }
