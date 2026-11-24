@@ -237,6 +237,13 @@ async function mountSupportWidget() {
   if (!U || U.role !== 'provider') return;
   document.body.insertAdjacentHTML('beforeend', `<div id="provider-support-widget" class="provider-support-widget"><aside id="provider-support-panel" class="support-panel" aria-label="Atendimento de suporte" hidden><header class="support-panel-header"><div><span>AJUDA CONECTAFEMME</span><strong>Central de suporte</strong></div><button type="button" data-support-close aria-label="Fechar suporte">×</button></header><div class="support-panel-content"><p class="support-empty">Carregando seus chamados…</p></div></aside><button class="support-fab" type="button" aria-expanded="false" aria-controls="provider-support-panel"><span aria-hidden="true">✉</span> Suporte <i class="support-fab-badge" hidden></i></button></div>`);
   const root = $('#provider-support-widget'), panel = $('#provider-support-panel'), fab = root.querySelector('.support-fab');
+  const openPanel = async () => {
+    panel.hidden = false;
+    fab.setAttribute('aria-expanded', 'true');
+    panel.dataset.ticket = '';
+    await renderSupportPanel().catch(() => { panel.querySelector('.support-panel-content').innerHTML = '<p class="support-empty">Não foi possível carregar seus chamados. Tente novamente.</p>'; });
+  };
+  $('#nav [data-support-open]')?.addEventListener('click', openPanel);
   const updateBadge = async () => {
     try {
       const data = await api('support_unread', null, '', true);
@@ -246,9 +253,8 @@ async function mountSupportWidget() {
     } catch { /* A indisponibilidade do contador não impede abrir o suporte. */ }
   };
   fab.onclick = async () => {
-    panel.hidden = !panel.hidden;
-    fab.setAttribute('aria-expanded', String(!panel.hidden));
-    if (!panel.hidden) { panel.dataset.ticket = ''; await renderSupportPanel().catch(() => { panel.querySelector('.support-panel-content').innerHTML = '<p class="support-empty">Não foi possível carregar seus chamados. Tente novamente.</p>'; }); }
+    if (panel.hidden) await openPanel();
+    else { panel.hidden = true; fab.setAttribute('aria-expanded', 'false'); }
   };
   root.addEventListener('click', async (event) => {
     const target = event.target.closest('button');
@@ -322,7 +328,7 @@ function toggleTheme() {
 
 function nav() {
   $('#nav').innerHTML = `<a href="#/">Início</a>` + (U
-    ? `<a href="#/${U.role === 'admin' ? 'admin' : 'painel'}">${U.role === 'admin' ? 'Admin' : U.role === 'provider' ? 'Meu painel' : 'Meus agendamentos'}</a>${['client', 'provider', 'admin'].includes(U.role) ? '<button class="btn sm push-toggle" id="push-toggle" type="button">Ativar notificações</button>' : ''}<button onclick="logout()">Sair</button>`
+    ? `<a href="#/${U.role === 'admin' ? 'admin' : 'painel'}">${U.role === 'admin' ? 'Admin' : U.role === 'provider' ? 'Meu painel' : 'Meus agendamentos'}</a>${U.role === 'provider' ? '<button class="btn sm provider-support-nav" type="button" data-support-open>Suporte</button>' : ''}${['client', 'provider', 'admin'].includes(U.role) ? '<button class="btn sm push-toggle" id="push-toggle" type="button">Ativar notificações</button>' : ''}<button onclick="logout()">Sair</button>`
     : `<a href="#/login">Entrar</a><a class="btn sm signup-link" href="#/cadastro">Cadastrar</a>`) +
     `<button class="btn sm install-app" id="install-app" type="button">Instalar app</button><button class="theme-toggle" id="theme-toggle" type="button" aria-label="Alternar tema" title="Alternar tema"><span aria-hidden="true">${document.documentElement.dataset.theme === 'dark' ? '☀' : '☾'}</span></button>`;
   $('#theme-toggle').onclick = toggleTheme;
@@ -980,6 +986,47 @@ function clientsTabMarkup(bookings, providerId, establishment) {
     <div class="box"><h3>Clientes atendidas</h3><p class="muted">Lista baseada nos agendamentos registrados no seu perfil.</p>${rows ? `<table><thead><tr><th>Cliente</th><th>Atendimentos</th><th>Último serviço</th><th>Data</th><th>Pós-atendimento</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted">Nenhuma cliente com atendimento registrado ainda.</p>'}</div>`;
 }
 
+function providerDashboardMarkup(bookings, slots, services) {
+  const today = todayInBrazil();
+  const todayDate = new Date(`${today}T12:00:00Z`);
+  const weekday = todayDate.getUTCDay();
+  const weekStartDate = new Date(todayDate.getTime() - ((weekday + 6) % 7) * 86400000);
+  const weekStart = weekStartDate.toISOString().slice(0, 10);
+  const weekEnd = new Date(weekStartDate.getTime() + 6 * 86400000).toISOString().slice(0, 10);
+  const activeBookings = bookings.filter((booking) => booking.status !== 'cancelado' && booking.day);
+  const weekCount = activeBookings.filter((booking) => booking.day >= weekStart && booking.day <= weekEnd).length;
+  const freeToday = slots.filter((slot) => slot.day === today && slot.available && !slot.booked).sort((a, b) => a.hour.localeCompare(b.hour));
+  const monthlyBookings = activeBookings.filter((booking) => booking.day.slice(0, 7) === today.slice(0, 7));
+  const monthDays = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + 1, 0)).getUTCDate();
+  const elapsedDays = todayDate.getUTCDate();
+  const monthlyEstimate = elapsedDays ? Math.round(monthlyBookings.length / elapsedDays * monthDays) : monthlyBookings.length;
+  const serviceCounts = new Map();
+  activeBookings.forEach((booking) => {
+    const title = String(booking.title || '').trim();
+    if (title) serviceCounts.set(title, (serviceCounts.get(title) || 0) + 1);
+  });
+  const mostPopular = [...serviceCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))[0];
+  const [currentHour, currentMinute] = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()).split(':').map(Number);
+  const currentMinutes = currentHour * 60 + currentMinute;
+  const nextBooking = activeBookings.filter((booking) => {
+    if (booking.day > today) return true;
+    if (booking.day < today) return false;
+    const [hour, minute] = String(booking.hour || '').split(':').map(Number);
+    return Number.isFinite(hour) && Number.isFinite(minute) && hour * 60 + minute >= currentMinutes;
+  }).sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`))[0];
+  const availableText = freeToday.length ? freeToday.map((slot) => esc(slot.hour)).join(' · ') : 'Nenhum horário livre restante hoje';
+  return `<section class="provider-dashboard" aria-label="Resumo da sua agenda">
+    <div class="provider-dashboard-heading"><div><span class="dashboard-kicker">SEU RESUMO</span><h3>Visão da agenda</h3><p>Indicadores atualizados a partir dos seus agendamentos e horários registrados.</p></div><span class="provider-dashboard-period">${fd(weekStart)}–${fd(weekEnd)}</span></div>
+    <div class="provider-dashboard-kpis">
+      <article class="provider-dashboard-kpi"><span>Agendamentos nesta semana</span><strong>${formatAdminNumber(weekCount)}</strong><small>De segunda a domingo · cancelados excluídos</small></article>
+      <article class="provider-dashboard-kpi"><span>Horários livres hoje</span><strong>${formatAdminNumber(freeToday.length)}</strong><small>${availableText}</small></article>
+      <article class="provider-dashboard-kpi"><span>Serviço mais procurado</span><strong class="provider-dashboard-service">${mostPopular ? esc(mostPopular[0]) : 'Ainda sem dados'}</strong><small>${mostPopular ? `${mostPopular[1]} agendamento${mostPopular[1] === 1 ? '' : 's'} no histórico carregado` : 'Aparecerá após os primeiros agendamentos'}</small></article>
+      <article class="provider-dashboard-kpi"><span>Estimativa de atendimentos no mês</span><strong>${formatAdminNumber(monthlyEstimate)}</strong><small>Projeção pela média diária deste mês (${monthlyBookings.length} até agora)</small></article>
+    </div>
+    <div class="provider-dashboard-footer"><span><strong>Próximo atendimento:</strong> ${nextBooking ? `${fd(nextBooking.day)} às ${esc(nextBooking.hour || '')} · ${esc(nextBooking.title || 'Atendimento')} · ${esc(nextBooking.other_name || 'Cliente')}` : 'Nenhum atendimento futuro confirmado na lista.'}</span><small>Serviço e estimativa consideram os agendamentos disponíveis no painel; a projeção não é garantia de volume.</small></div>
+  </section>`;
+}
+
 async function painel(tab = 'ag') {
   if (!U) return location.hash = '#/login';
   if (U.role === 'admin') return location.hash = '#/admin';
@@ -1009,7 +1056,7 @@ async function painel(tab = 'ag') {
   const profileLink = publicProfileUrl(U.id);
   const selectedSpecialties = specialtyList(me);
   const tabs = {
-    ag: `${buildManualBookingForm(services, slots)}<div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Sem agendamentos ainda.</p>'}</div>${rescheduleDialogMarkup()}`,
+    ag: `${providerDashboardMarkup(bookings, slots, services)}${buildManualBookingForm(services, slots)}<div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Sem agendamentos ainda.</p>'}</div>${rescheduleDialogMarkup()}`,
     perfil: `<div class="box"><h3>Seu perfil público</h3><p class="muted">Envie este link às suas clientes para elas verem seus serviços e agendarem.</p><div class="share-link-row"><input id="public-link" readonly value="${esc(profileLink)}"><button class="btn" id="copy-link" type="button">Copiar link público</button></div>
       <label>Nome do estabelecimento</label><input id="n" value="${esc(me.name)}"><label>WhatsApp</label><input id="w" value="${esc(me.whatsapp)}"><div class="specialty-grid"><label>Especialidade principal<select id="c1" required>${specialtyOptions(categories, selectedSpecialties[0] || me.category || '')}</select></label><label>Segunda especialidade (opcional)<select id="c2"></select></label><small class="muted specialty-hint">Escolha até duas especialidades oferecidas pelo seu estabelecimento.</small></div><div class="provider-location-grid"><label>Estado<select id="profile-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option ${state === me.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="ci" value="${esc(me.city)}" autocomplete="address-level2"></label></div>
       <label>Instagram</label><input id="instagram" type="url" placeholder="https://www.instagram.com/seuperfil" value="${esc(me.instagram_url || '')}">
@@ -1197,7 +1244,7 @@ window.cancelServiceEdit = () => {
   $('#cancel-service-edit').hidden = true;
 };
 
-function adminDashboardMarkup(users, clients, professionals) {
+function adminDashboardMarkup(users, clients, professionals, bookings, supportUnread) {
   const format = (value) => new Intl.NumberFormat('pt-BR').format(value);
   const clean = (value) => String(value ?? '').trim();
   const realUsers = users.filter((user) => !user.is_demo);
@@ -1206,6 +1253,13 @@ function adminDashboardMarkup(users, clients, professionals) {
   const localities = new Set(realUsers.filter((user) => clean(user.city) || clean(user.state)).map((user) => `${clean(user.city).toLocaleLowerCase('pt-BR')}|${clean(user.state).toUpperCase()}`)).size;
   const clientsWithoutLocation = realClients.filter((user) => !clean(user.city) && !clean(user.state)).length;
   const states = [...new Set(realUsers.map((user) => clean(user.state).toUpperCase()).filter(Boolean))].sort();
+  const activeBookings = bookings.filter((booking) => booking.status !== 'cancelado');
+  const today = todayInBrazil();
+  const weekStartDate = new Date(`${today}T12:00:00Z`);
+  weekStartDate.setUTCDate(weekStartDate.getUTCDate() - ((weekStartDate.getUTCDay() + 6) % 7));
+  const weekStart = weekStartDate.toISOString().slice(0, 10);
+  const weekEnd = new Date(weekStartDate.getTime() + 6 * 86400000).toISOString().slice(0, 10);
+  const thisWeek = activeBookings.filter((booking) => booking.day >= weekStart && booking.day <= weekEnd).length;
   return `<section class="admin-dashboard">
     <div class="dashboard-intro"><div><span class="dashboard-kicker">VISÃO GERAL</span><h3>Comunidade ConectaFemme</h3><p class="muted">Acompanhe o crescimento e a distribuição das pessoas cadastradas.</p></div><span class="dashboard-live"><i></i> Dados atualizados agora</span></div>
     <div class="dashboard-kpis">
@@ -1214,6 +1268,7 @@ function adminDashboardMarkup(users, clients, professionals) {
       <article class="dashboard-kpi dashboard-kpi-providers"><span class="dashboard-kpi-label">Profissionais</span><strong>${format(realProfessionals.length)}</strong><small>Perfis profissionais reais</small></article>
       <article class="dashboard-kpi dashboard-kpi-locations"><span class="dashboard-kpi-label">Localidades mapeadas</span><strong>${format(localities)}</strong><small>Cidade e UF cadastradas</small></article>
     </div>
+    <div class="admin-operations-strip" aria-label="Resumo da operação"><article><span>Agendamentos nesta semana</span><strong>${format(thisWeek)}</strong><small>Entre ${fd(weekStart)} e ${fd(weekEnd)} · amostra dos últimos ${format(bookings.length)} registros disponíveis</small></article><a href="#" class="admin-support-alert" onclick="event.preventDefault();admin('h')"><span>Mensagens novas de suporte</span><strong>${format(supportUnread.count || 0)}</strong><small>Abrir fila de chamados →</small></a></div>
     <div class="dashboard-main-grid">
       <section class="box dashboard-location-panel">
         <div class="dashboard-panel-heading"><div><span class="dashboard-kicker">DISTRIBUIÇÃO GEOGRÁFICA</span><h3 id="dashboard-location-title">Usuários por estado</h3><p id="dashboard-location-subtitle" class="muted">Selecione um estado para detalhar as cidades.</p></div><button class="btn out sm" id="dashboard-clear-state" type="button" hidden>Ver todos os estados</button></div>
@@ -1316,7 +1371,7 @@ async function admin(tab = 'd') {
   const onlineBookings = bookings.filter((booking) => booking.source === 'site' || Number(booking.client_id) > 0);
   const professionalBookings = bookings.filter((booking) => booking.source === 'professional' || !Number(booking.client_id));
   const content = {
-    d: adminDashboardMarkup(users, clients, professionals),
+    d: adminDashboardMarkup(users, clients, professionals, bookings, supportUnread),
     p: userTable(professionals, 'Profissionais', 'Nenhum profissional cadastrado. Os perfis DEMO ficam nesta aba para exclusão posterior.'),
     c: userTable(clients, 'Clientes', 'Nenhum cliente cadastrado.'),
     k: `<div class="box"><div class="bar"><input id="nc" placeholder="Nova categoria"><button class="btn" id="ac">Adicionar</button></div><br>${categories.map((category) => `<span class="tag">${esc(category)} <a href="#" onclick="acd('${esc(category)}');return false">✕</a></span> `).join('')}</div>`,
