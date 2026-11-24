@@ -137,6 +137,19 @@ const brl = (value) => Number(value).toLocaleString('pt-BR', { style: 'currency'
 const wa = (number, message) => `https://wa.me/55${String(number).replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
 const imgs = (value) => { try { return Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch { return []; } };
 const bg = (url) => url ? `style="background-image:url('${esc(url)}')"` : '';
+function providerReviewsMarkup(professional) {
+  const reviews = Array.isArray(professional.reviews) ? professional.reviews : [];
+  const callToAction = U?.role === 'client'
+    ? '<a class="btn out sm" href="#/painel">Ver meus agendamentos</a>'
+    : !U ? '<a class="btn out sm" href="#/login">Entrar para avaliar</a>' : '';
+  const reviewList = reviews.length
+    ? `<details class="review-history"><summary><span><strong>Avaliações de clientes</strong><small>Leia os comentários compartilhados</small></span>${ratingSummary(professional.rating_avg, professional.review_count)}</summary><div class="review-list">${reviews.slice(0, 6).map((review) => `<article class="review-item"><div><strong>${esc(review.client_name || 'Cliente')}</strong><span class="review-stars">${'★'.repeat(Number(review.rating))}${'☆'.repeat(5 - Number(review.rating))}</span></div><p>${esc(review.comment || 'Atendimento avaliado pela cliente.')}</p></article>`).join('')}</div></details>`
+    : `<div class="review-empty-state"><div class="review-empty-icon" aria-hidden="true">★</div><div><h3>Ainda sem avaliações</h3><p>As avaliações aparecem aqui depois que clientes concluem um atendimento e compartilham sua experiência.</p></div>${ratingSummary(professional.rating_avg, professional.review_count)}</div>`;
+  const guidance = U?.role === 'provider'
+    ? 'As clientes podem avaliar após a conclusão do atendimento. A opção aparece nos agendamentos da conta da cliente.'
+    : 'Já foi atendida? Depois que o atendimento for concluído, abra “Meus agendamentos” e toque em “Avaliar” para compartilhar sua experiência.';
+  return `<section class="box review-section" aria-labelledby="provider-reviews-title"><div class="review-section-heading"><div><span class="review-kicker">EXPERIÊNCIAS REAIS</span><h3 id="provider-reviews-title">Avaliações</h3></div>${reviews.length ? ratingSummary(professional.rating_avg, professional.review_count) : ''}</div>${reviewList}<div class="review-guide"><p>${guidance}</p>${callToAction}</div></section>`;
+}
 const professionalInitials = (value) => {
   const words = String(value ?? '').trim().split(/\s+/).filter(Boolean);
   const meaningful = words.filter((word, index) => index === 0 || !/^(da|das|de|do|dos|e)$/i.test(word));
@@ -307,7 +320,7 @@ async function provider(id) {
         <div class="thumbs">${images.map((image) => `<img src="${esc(image)}" alt="Foto de ${esc(service.title)}" onclick="document.getElementById('m${service.id}').src=this.src">`).join('')}</div><h4>${esc(service.title)}</h4><p class="muted">${esc(service.descr)}</p><div class="price">${brl(service.price)}</div>
         <button class="btn sm" data-s="${service.id}">Escolher</button></div>`;
     }).join('') || '<p class="muted">Sem serviços ainda.</p>'}</div>
-    ${professional.reviews?.length ? `<details class="box reviews-box"><summary class="reviews-summary"><span><strong>Avaliações de clientes</strong><small>Ver comentários deixados</small></span>${ratingSummary(professional.rating_avg, professional.review_count)}</summary><div class="review-list">${professional.reviews.slice(0, 6).map((review) => `<article class="review-item"><div><strong>${esc(review.client_name || 'Cliente')}</strong><span class="review-stars">${'★'.repeat(Number(review.rating))}${'☆'.repeat(5 - Number(review.rating))}</span></div><p>${esc(review.comment || 'Atendimento avaliado pela cliente.')}</p></article>`).join('')}</div></details>` : ''}
+    ${providerReviewsMarkup(professional)}
     ${calendarMarkup}`;
   const syncBookingButton = () => {
     const button = $('#bk');
@@ -472,7 +485,7 @@ const cadastro = () => authForm(true);
 
 const statusLabel = (status) => ({ pendente: 'Pendente', confirmado: 'Confirmado', concluido: 'OK', cancelado: 'Cancelado' }[status] || status);
 function bookTable(bookings) {
-  return `<table><tr><th>Data</th><th>Serviço</th><th>${U.role === 'client' ? 'Profissional' : 'Cliente'}</th><th>Status</th><th></th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${booking.hour}</td><td>${esc(booking.title)}<br>${brl(booking.price)}</td><td>${esc(booking.other_name || 'Cliente')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td><td>${booking.other_whatsapp ? `<a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(booking.other_whatsapp, `Olá! Sobre o agendamento de ${booking.title} em ${fd(booking.day)} às ${booking.hour}.`)}">WhatsApp</a>` : ''}${booking.status === 'confirmado' ? ` <button class="btn out sm" type="button" data-reschedule-id="${Number(booking.id)}">Remarcar</button>` : ''}${U.role === 'client' && booking.can_review ? ` <button class="btn sm" onclick="rateBooking(${booking.id})">Avaliar</button>` : ''}${booking.status !== 'cancelado' && booking.status !== 'concluido' ? ` <button class="btn red sm" onclick="st(${booking.id},'cancelado')">Cancelar</button>` : ''}</td></tr>`).join('')}</table>`;
+  return `<table><tr><th>Data</th><th>Serviço</th><th>${U.role === 'client' ? 'Profissional' : 'Cliente'}</th><th>Status</th><th></th></tr>${bookings.map((booking) => `<tr><td>${fd(booking.day)} ${booking.hour}</td><td>${esc(booking.title)}<br>${brl(booking.price)}</td><td>${esc(booking.other_name || 'Cliente')}</td><td><span class="status-pill status-${esc(booking.status)}">${statusLabel(booking.status)}</span></td><td>${booking.other_whatsapp ? `<a class="btn wa sm" target="_blank" rel="noopener noreferrer" href="${wa(booking.other_whatsapp, `Olá! Sobre o agendamento de ${booking.title} em ${fd(booking.day)} às ${booking.hour}.`)}">WhatsApp</a>` : ''}${booking.status === 'confirmado' ? ` <button class="btn out sm" type="button" data-reschedule-id="${Number(booking.id)}">Remarcar</button>` : ''}${U.role === 'client' && booking.can_review ? ` <button class="btn sm" type="button" data-review-id="${Number(booking.id)}">Avaliar profissional</button>` : ''}${booking.status !== 'cancelado' && booking.status !== 'concluido' ? ` <button class="btn red sm" onclick="st(${booking.id},'cancelado')">Cancelar</button>` : ''}</td></tr>`).join('')}</table>`;
 }
 
 function rescheduleDialogMarkup() {
@@ -483,14 +496,67 @@ function rescheduleDialogMarkup() {
     <div class="profile-actions"><button class="btn" id="reschedule-confirm" type="button" disabled>Confirmar remarcação</button><button class="btn out" id="reschedule-close" type="button">Agora não</button></div>
   </dialog>`;
 }
-window.rateBooking = async (id) => {
-  const rating = Number(prompt('De 1 a 5, qual nota você dá para o atendimento?'));
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return alert('Informe uma nota inteira de 1 a 5.');
-  const comment = prompt('Quer deixar um comentário? (opcional)') || '';
-  await api('review_add', { booking_id: id, rating, comment });
-  alert('Avaliação publicada. Obrigado por compartilhar sua experiência!');
-  painel();
-};
+function reviewDialogMarkup() {
+  return `<dialog id="review-dialog" class="review-dialog" aria-labelledby="review-dialog-title"><form id="review-form">
+    <span class="review-kicker">SUA EXPERIÊNCIA IMPORTA</span><h2 id="review-dialog-title">Avaliar profissional</h2><p id="review-target" class="muted"></p>
+    <fieldset class="review-rating-field"><legend>Como foi seu atendimento?</legend><div class="review-rating-picker" role="radiogroup" aria-label="Nota de 1 a 5 estrelas">${[1, 2, 3, 4, 5].map((rating) => `<button class="review-star-button" type="button" data-review-rating="${rating}" role="radio" aria-checked="false" aria-label="${rating} ${rating === 1 ? 'estrela' : 'estrelas'}">★</button>`).join('')}</div><p id="review-rating-label" class="review-rating-label" aria-live="polite">Selecione de 1 a 5 estrelas.</p></fieldset>
+    <label for="review-comment">Comentário (opcional)</label><textarea id="review-comment" rows="4" maxlength="500" placeholder="Conte o que gostou no atendimento..."></textarea><small id="review-count" class="review-count">0/500</small>
+    <p id="review-feedback" class="review-feedback" role="status" aria-live="polite"></p><div class="review-dialog-actions"><button class="btn" id="review-submit" type="button" disabled>Publicar avaliação</button><button class="btn out" id="review-cancel" type="button">Cancelar</button></div>
+  </form></dialog>`;
+}
+function setupBookingReviews(bookings) {
+  const dialog = $('#review-dialog');
+  if (!dialog || U?.role !== 'client') return;
+  const stars = [...dialog.querySelectorAll('[data-review-rating]')];
+  const submit = $('#review-submit');
+  const feedback = $('#review-feedback');
+  let rating = 0;
+  $('#review-cancel').onclick = () => dialog.close();
+  $('#review-comment').oninput = () => { $('#review-count').textContent = `${$('#review-comment').value.length}/500`; };
+  stars.forEach((star) => star.addEventListener('click', () => {
+    rating = Number(star.dataset.reviewRating);
+    stars.forEach((item) => {
+      const selected = Number(item.dataset.reviewRating) <= rating;
+      item.classList.toggle('is-selected', selected);
+      item.setAttribute('aria-checked', String(Number(item.dataset.reviewRating) === rating));
+    });
+    $('#review-rating-label').textContent = `${rating} de 5 estrelas selecionadas`;
+    submit.disabled = false;
+  }));
+  document.querySelectorAll('[data-review-id]').forEach((button) => button.addEventListener('click', () => {
+    const booking = bookings.find((item) => Number(item.id) === Number(button.dataset.reviewId));
+    if (!booking?.can_review) return;
+    dialog.dataset.bookingId = String(booking.id);
+    rating = 0;
+    stars.forEach((star) => { star.classList.remove('is-selected'); star.setAttribute('aria-checked', 'false'); });
+    $('#review-rating-label').textContent = 'Selecione de 1 a 5 estrelas.';
+    $('#review-comment').value = '';
+    $('#review-count').textContent = '0/500';
+    $('#review-target').textContent = `${booking.other_name || 'Profissional'}${booking.title ? ` · ${booking.title}` : ''} · ${fd(booking.day)}`;
+    feedback.textContent = '';
+    submit.disabled = true;
+    submit.hidden = false;
+    dialog.showModal();
+  }));
+  submit.onclick = async () => {
+    const id = Number(dialog.dataset.bookingId);
+    if (!Number.isSafeInteger(id) || id < 1 || !rating) {
+      feedback.textContent = 'Selecione uma nota de 1 a 5 estrelas.';
+      return;
+    }
+    submit.disabled = true;
+    feedback.textContent = 'Publicando sua avaliação…';
+    try {
+      await api('review_add', { booking_id: id, rating, comment: $('#review-comment').value.trim() }, '', true);
+      feedback.textContent = 'Avaliação publicada. Obrigada por compartilhar sua experiência!';
+      submit.hidden = true;
+      setTimeout(() => { if (dialog.open) dialog.close(); painel('ag'); }, 1100);
+    } catch (error) {
+      feedback.textContent = error?.error || 'Não foi possível publicar a avaliação. Tente novamente.';
+      submit.disabled = false;
+    }
+  };
+}
 window.st = async (id, status) => {
   await api('booking_status', { id, status });
   if (status === 'cancelado') {
@@ -818,8 +884,9 @@ async function painel(tab = 'ag') {
   if (U.role === 'client') {
     const location = await api('client_location');
     const hasLocation = Boolean(location.city || location.state);
-    app.innerHTML = `<h2>Meus agendamentos</h2><details class="box client-location-card" ${hasLocation ? '' : 'open'}><summary><strong>Minha localidade</strong><span class="muted">${hasLocation ? 'Atualize cidade e estado' : 'Opcional · ajuda nas métricas da comunidade'}</span></summary><p class="muted">A localidade é usada apenas em métricas agregadas do painel administrativo e não aparece no perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-location-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option value="${state}" ${state === location.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-location-city" maxlength="80" value="${esc(location.city || '')}" autocomplete="address-level2"></label></div><br><button class="btn" id="client-location-save" type="button">Salvar localidade</button></details><div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Nenhum agendamento.</p>'}</div>${rescheduleDialogMarkup()}`;
+    app.innerHTML = `<h2>Meus agendamentos</h2><details class="box client-location-card" ${hasLocation ? '' : 'open'}><summary><strong>Minha localidade</strong><span class="muted">${hasLocation ? 'Atualize cidade e estado' : 'Opcional · ajuda nas métricas da comunidade'}</span></summary><p class="muted">A localidade é usada apenas em métricas agregadas do painel administrativo e não aparece no perfil público.</p><div class="provider-location-grid"><label>Estado<select id="client-location-state"><option value="">Selecione</option>${BRAZIL_STATES.map((state) => `<option value="${state}" ${state === location.state ? 'selected' : ''}>${state}</option>`).join('')}</select></label><label>Cidade<input id="client-location-city" maxlength="80" value="${esc(location.city || '')}" autocomplete="address-level2"></label></div><br><button class="btn" id="client-location-save" type="button">Salvar localidade</button></details><div class="box">${bookings.length ? bookTable(bookings) : '<p class="muted">Nenhum agendamento.</p>'}</div>${rescheduleDialogMarkup()}${reviewDialogMarkup()}`;
     setupClientReschedule(bookings);
+    setupBookingReviews(bookings);
     $('#client-location-save').onclick = async () => {
       const state = $('#client-location-state').value;
       const city = $('#client-location-city').value.trim();
