@@ -91,6 +91,13 @@ const bodyString = (body: any, key: string) => String(body?.[key] ?? "").trim();
 const idFilter = (id: unknown) => `eq.${Number(id)}`;
 const inFilter = (ids: number[]) => ids.length ? `in.(${ids.join(",")})` : "in.(0)";
 
+async function supportAuth(req: Request, roles: string[]) {
+  const me = await auth(req, roles);
+  const current = first(await get("users", { select: "id,role", id: idFilter(me.id), limit: "1" }));
+  if (!current || current.role !== me.role) fail(401, "A conta não está mais disponível para esta ação.");
+  return me;
+}
+
 async function relatedUsers(ids: number[]) {
   const validIds = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))];
   if (!validIds.length) return [];
@@ -522,6 +529,84 @@ async function handle(req: Request) {
       if (first(await get("reviews", { select: "id", booking_id: idFilter(booking.id), limit: "1" }))) fail(400, "Este atendimento já foi avaliado.");
       await post("reviews", { booking_id: booking.id, client_id: me.id, provider_id: booking.provider_id, rating, comment });
       return { ok: 1 };
+    }
+    case "support_unread": {
+      const me = await supportAuth(req, ["provider", "admin"]);
+      const unread = await get("support_messages", { select: "ticket_id", recipient_id: idFilter(me.id), read_at: "is.null", limit: "1000" });
+      const byTicket: Record<string, number> = {};
+      for (const message of unread) byTicket[String(message.ticket_id)] = (byTicket[String(message.ticket_id)] ?? 0) + 1;
+      return { count: unread.length, by_ticket: byTicket };
+    }
+    case "support_list": {
+      const me = await supportAuth(req, ["provider", "admin"]);
+      const rows = await get("support_tickets", {
+        select: "id,protocol,professional_id,admin_id,subject,status,created_at,updated_at",
+        ...(me.role === "provider" ? { professional_id: idFilter(me.id) } : { admin_id: idFilter(me.id) }),
+        order: "updated_at.desc", limit: "200",
+      });
+      if (!rows.length) return [];
+      const people = await relatedUsers([...new Set<number>(rows.map((row: any) => Number(row.professional_id)))]);
+      const messages = await get("support_messages", {
+        select: "id,ticket_id,sender_id,body,created_at,recipient_id,read_at",
+        ticket_id: inFilter(rows.map((row: any) => Number(row.id))), order: "created_at.desc", limit: "1000",
+      });
+      const unread = await get("support_messages", {
+        select: "ticket_id", recipient_id: idFilter(me.id), read_at: "is.null",
+        ticket_id: inFilter(rows.map((row: any) => Number(row.id))), limit: "1000",
+      });
+      const unreadCounts: Record<string, number> = {};
+      for (const message of unread) unreadCounts[String(message.ticket_id)] = (unreadCounts[String(message.ticket_id)] ?? 0) + 1;
+      const latestByTicket = new Map<string, any>();
+      for (const message of messages) if (!latestByTicket.has(String(message.ticket_id))) latestByTicket.set(String(message.ticket_id), message);
+      return rows.map((row: any) => ({
+        ...row,
+        professional_name: people.find((person: any) => Number(person.id) === Number(row.professional_id))?.name ?? "Profissional",
+        last_message: latestByTicket.get(String(row.id))?.body ?? "",
+        last_message_at: latestByTicket.get(String(row.id))?.created_at ?? row.created_at,
+        unread_count: unreadCounts[String(row.id)] ?? 0,
+      }));
+    }
+    case "support_messages": {
+      const me = await supportAuth(req, ["provider", "admin"]);
+      const ticketId = Number(url.searchParams.get("id") ?? 0);
+      if (!Number.isSafeInteger(ticketId) || ticketId < 1) fail(400, "Chamado inválido.");
+      const ticket = first(await get("support_tickets", {
+        select: "id,protocol,professional_id,admin_id,subject,status,created_at,updated_at",
+        id: idFilter(ticketId), limit: "1",
+      }));
+      if (!ticket) fail(404, "Chamado não encontrado.");
+      if ((me.role === "provider" && Number(ticket.professional_id) !== me.id) || (me.role === "admin" && Number(ticket.admin_id) !== me.id)) fail(403, "Sem permissão.");
+      await patch("support_messages", { ticket_id: idFilter(ticketId), recipient_id: idFilter(me.id), read_at: "is.null" }, { read_at: new Date().toISOString() });
+      const messages = await get("support_messages", {
+        select: "id,ticket_id,sender_id,recipient_id,body,created_at,read_at",
+        ticket_id: idFilter(ticketId), order: "created_at.asc", limit: "500",
+      });
+      const people = await relatedUsers([...new Set<number>(messages.map((message: any) => Number(message.sender_id)))]);
+      return { ticket, messages: messages.map((message: any) => ({ ...message, sender_name: people.find((person: any) => Number(person.id) === Number(message.sender_id))?.name ?? "Usuário" })) };
+    }
+    case "support_create": {
+      const me = await supportAuth(req, ["provider"]);
+      const subject = bodyString(input, "subject").slice(0, 150), body = bodyString(input, "body");
+      if (!subject || !body || body.length > 5000) fail(400, "Informe o assunto e uma mensagem de até 5.000 caracteres.");
+      const admin = first(await get("users", { select: "id", role: "eq.admin", order: "id.asc", limit: "1" }));
+      if (!admin) fail(503, "A conta administrativa não está disponível para receber chamados.");
+      return await db("rpc/create_conecta_support_ticket", "POST", {}, {
+        p_professional_id: me.id, p_admin_id: Number(admin.id), p_subject: subject, p_body: body,
+      });
+    }
+    case "support_reply": {
+      const me = await supportAuth(req, ["provider", "admin"]);
+      const ticketId = Number(input.ticket_id), body = bodyString(input, "body");
+      if (!Number.isSafeInteger(ticketId) || ticketId < 1 || !body || body.length > 5000) fail(400, "Informe uma mensagem de até 5.000 caracteres.");
+      const ticket = first(await get("support_tickets", {
+        select: "id,protocol,professional_id,admin_id,status", id: idFilter(ticketId), limit: "1",
+      }));
+      if (!ticket) fail(404, "Chamado não encontrado.");
+      if ((me.role === "provider" && Number(ticket.professional_id) !== me.id) || (me.role === "admin" && Number(ticket.admin_id) !== me.id)) fail(403, "Sem permissão.");
+      const recipientId = me.role === "admin" ? Number(ticket.professional_id) : Number(ticket.admin_id);
+      const message = first(await post("support_messages", { ticket_id: ticketId, sender_id: me.id, recipient_id: recipientId, body }));
+      await patch("support_tickets", { id: idFilter(ticketId) }, { updated_at: new Date().toISOString(), status: "aberto" });
+      return { ticket, message };
     }
     case "admin_users": {
       await auth(req,["admin"]);

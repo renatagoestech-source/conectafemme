@@ -75,6 +75,13 @@ async function db(table: string, method = "GET", params: Record<string, string> 
 const get = (table: string, params: Record<string, string>) => db(table, "GET", params);
 const del = (table: string, params: Record<string, string>) => db(table, "DELETE", params, undefined, "return=minimal");
 
+async function authenticateCurrent(req: Request, roles: string[]) {
+  const me = await authenticate(req, roles);
+  const current = first(await get("users", { select: "id,role", id: idFilter(me.id), limit: "1" }));
+  if (!current || current.role !== me.role) fail(401, "A conta não está mais disponível para esta ação.");
+  return me;
+}
+
 function decodePushKey(value: string) {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
   try {
@@ -166,7 +173,7 @@ async function dispatchEvent(eventKey: string, recipientId: unknown, payload: { 
   }
 }
 
-async function sendBookingEmail(eventKey: string, recipient: any, subject: string, text: string) {
+async function sendBookingEmail(eventKey: string, recipient: any, subject: string, text: string, path = "/#/painel") {
   if (!recipient?.email) return { skipped: true, reason: "email_unavailable" };
   if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) return { skipped: true, reason: "email_not_configured" };
   const claimed = await db("push_event_log", "POST", { on_conflict: "event_key" }, { event_key: eventKey }, "resolution=ignore-duplicates,return=representation");
@@ -181,7 +188,7 @@ async function sendBookingEmail(eventKey: string, recipient: any, subject: strin
         to: [recipient.email],
         subject,
         text,
-        html: `<div style="font-family:Arial,sans-serif;color:#38242a;line-height:1.6"><h2 style="color:#7b1e3a">ConectaFemme</h2><p>${safe(text)}</p><p><a href="${safe(APP_ORIGIN)}/#/painel">Abrir painel</a></p></div>`,
+        html: `<div style="font-family:Arial,sans-serif;color:#38242a;line-height:1.6"><h2 style="color:#7b1e3a">ConectaFemme</h2><p>${safe(text)}</p><p><a href="${safe(APP_ORIGIN)}${path}">Abrir painel</a></p></div>`,
       }),
     });
     if (!result.ok) {
@@ -328,6 +335,38 @@ async function notifyReschedule(req: Request, input: any) {
   return { ok: 1, push, email };
 }
 
+async function notifySupport(req: Request, input: any) {
+  const me = await authenticateCurrent(req, ["provider", "admin"]);
+  const messageId = Number(input.message_id), ticketId = Number(input.ticket_id);
+  if (!Number.isSafeInteger(messageId) || messageId < 1 || !Number.isSafeInteger(ticketId) || ticketId < 1) fail(400, "Mensagem de suporte inválida.");
+  const message = first(await get("support_messages", {
+    select: "id,ticket_id,sender_id,recipient_id,body,created_at", id: idFilter(messageId), ticket_id: idFilter(ticketId), limit: "1",
+  }));
+  if (!message || Number(message.sender_id) !== me.id) fail(403, "Sem permissão para notificar esta mensagem.");
+  const ticket = first(await get("support_tickets", {
+    select: "id,protocol,professional_id,admin_id", id: idFilter(ticketId), limit: "1",
+  }));
+  if (!ticket) fail(404, "Chamado não encontrado.");
+  const expectedRecipient = me.role === "provider" ? Number(ticket.admin_id) : Number(ticket.professional_id);
+  if (Number(message.recipient_id) !== expectedRecipient) fail(403, "Destinatário da mensagem inválido.");
+  const recipient = first(await get("users", { select: "id,name,email,role", id: idFilter(expectedRecipient), limit: "1" }));
+  if (!recipient) return { ok: 1, skipped: true, reason: "recipient_unavailable" };
+  const sender = first(await get("users", { select: "name", id: idFilter(me.id), limit: "1" }));
+  const text = `${sender?.name ?? (me.role === "provider" ? "A profissional" : "O administrador")} enviou uma nova mensagem no chamado ${ticket.protocol}. Acesse o ConectaFemme para responder.`;
+  const payload = { title: `Nova mensagem · ${ticket.protocol}`, body: text, url: recipient.role === "admin" ? "/#/admin" : "/#/painel" };
+  const eventKey = `support:${ticketId}:${messageId}:${expectedRecipient}`;
+  let push: any;
+  try { push = await dispatchEvent(eventKey, expectedRecipient, payload); }
+  catch (error) {
+    console.error("Support push failed", error instanceof Error ? error.name : "UnknownError");
+    push = { skipped: true, reason: "delivery_failed" };
+  }
+  const email = push?.duplicate || (!push?.skipped)
+    ? { skipped: true, reason: push?.duplicate ? "already_notified" : "push_delivered" }
+    : await sendBookingEmail(`email:${eventKey}`, recipient, payload.title, text, recipient.role === "admin" ? "/#/admin" : "/#/painel");
+  return { ok: 1, push, email };
+}
+
 async function handle(req: Request) {
   const url = new URL(req.url), action = url.searchParams.get("a") ?? "";
   let input: any = {};
@@ -340,7 +379,7 @@ async function handle(req: Request) {
       return { publicKey: keys.public_key };
     }
     case "subscribe": {
-      const me = await authenticate(req, ["client", "provider"]);
+      const me = await authenticateCurrent(req, ["client", "provider", "admin"]);
       const subscription = input?.subscription;
       const endpoint = validateEndpoint(subscription?.endpoint);
       const p256dh = String(subscription?.keys?.p256dh ?? ""), authKey = String(subscription?.keys?.auth ?? "");
@@ -353,7 +392,7 @@ async function handle(req: Request) {
       return { ok: 1 };
     }
     case "unsubscribe": {
-      const me = await authenticate(req, ["client", "provider"]);
+      const me = await authenticateCurrent(req, ["client", "provider", "admin"]);
       const endpoint = validateEndpoint(input?.endpoint);
       await del("push_subscriptions", { endpoint: `eq.${endpoint}`, user_id: idFilter(me.id) });
       return { ok: 1 };
@@ -361,6 +400,7 @@ async function handle(req: Request) {
     case "notify_booking": return await notifyBooking(req, input);
     case "notify_status": return await notifyStatus(req, input);
     case "notify_reschedule": return await notifyReschedule(req, input);
+    case "notify_support": return await notifySupport(req, input);
     default: fail(404, "Ação de notificação inválida.");
   }
 }

@@ -57,7 +57,7 @@ function refreshPushButton() {
 }
 
 async function togglePushNotifications() {
-  if (!U || !['client', 'provider'].includes(U.role)) return;
+  if (!U || !['client', 'provider', 'admin'].includes(U.role)) return;
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     alert('Este navegador não oferece suporte a notificações push.');
     return;
@@ -103,7 +103,7 @@ async function togglePushNotifications() {
     await subscription.unsubscribe();
     throw error;
   }
-  alert('Notificações ativadas. Você receberá avisos sobre pedidos, confirmações e cancelamentos de agendamentos.');
+  alert('Notificações ativadas. Você receberá avisos importantes do ConectaFemme, incluindo novas mensagens de suporte.');
   refreshPushButton();
 }
 
@@ -202,6 +202,108 @@ async function pushApi(action, body = null, quiet = true) {
   return data;
 }
 
+function notifySupportMessage(ticketId, messageId) {
+  return pushApi('notify_support', { ticket_id: Number(ticketId), message_id: Number(messageId) }, true)
+    .catch((error) => { console.warn('Mensagem salva; não foi possível enviar o aviso externo:', error); return null; });
+}
+
+function supportTicketListMarkup(tickets, adminView = false) {
+  if (!tickets.length) return '<p class="support-empty">Nenhum chamado por aqui. Se precisar de ajuda, abra um novo chamado.</p>';
+  return `<div class="support-ticket-list">${tickets.map((ticket) => `<button class="support-ticket-card ${Number(ticket.unread_count) ? 'has-unread' : ''}" type="button" ${adminView ? 'data-admin-support-ticket' : 'data-support-ticket'}="${Number(ticket.id)}"><span class="support-ticket-top"><strong>${esc(ticket.protocol)}</strong>${Number(ticket.unread_count) ? `<i>${Number(ticket.unread_count)} nova${Number(ticket.unread_count) === 1 ? '' : 's'}</i>` : ''}</span><span class="support-ticket-subject">${esc(ticket.subject)}</span><small>${esc(adminView ? ticket.professional_name : ticket.last_message || ticket.status)} · ${new Date(ticket.last_message_at || ticket.updated_at).toLocaleDateString('pt-BR')}</small></button>`).join('')}</div>`;
+}
+
+function supportThreadMarkup(thread, adminView = false) {
+  const ticket = thread.ticket;
+  return `<div class="support-thread-heading"><button class="btn out sm" type="button" ${adminView ? 'data-admin-support-back' : 'data-support-back'}>← Chamados</button><div><span class="support-protocol">Protocolo ${esc(ticket.protocol)}</span><strong>${esc(ticket.subject)}</strong>${adminView ? `<small>Profissional: ${esc(ticket.professional_name || '')}</small>` : ''}</div></div><div class="support-messages" aria-live="polite">${thread.messages.map((message) => `<article class="support-message ${Number(message.sender_id) === Number(U.id) ? 'is-mine' : ''}"><div><strong>${esc(Number(message.sender_id) === Number(U.id) ? 'Você' : message.sender_name)}</strong><time>${new Date(message.created_at).toLocaleString('pt-BR')}</time></div><p>${esc(message.body).replace(/\n/g, '<br>')}</p></article>`).join('')}</div><form class="support-reply-form" data-support-reply-form><label for="support-reply">${adminView ? 'Responder à profissional' : 'Enviar mensagem'}</label><textarea id="support-reply" maxlength="5000" rows="3" required placeholder="Escreva sua mensagem…"></textarea><div><small>Até 5.000 caracteres</small><button class="btn" type="submit">Enviar mensagem</button></div></form>`;
+}
+
+async function renderSupportPanel() {
+  const panel = $('#provider-support-panel');
+  if (!panel) return;
+  const ticketId = Number(panel.dataset.ticket || 0);
+  if (ticketId) {
+    const thread = await api('support_messages', null, `&id=${ticketId}`, true);
+    panel.dataset.ticket = String(ticketId);
+    panel.querySelector('.support-panel-content').innerHTML = supportThreadMarkup(thread);
+  } else {
+    const tickets = await api('support_list', null, '', true);
+    panel.querySelector('.support-panel-content').innerHTML = `<div class="support-list-heading"><div><strong>Seus chamados</strong><small>Converse com a equipe do ConectaFemme.</small></div><button class="btn sm" type="button" data-support-new>Novo chamado</button></div>${supportTicketListMarkup(tickets)}`;
+  }
+}
+
+async function mountSupportWidget() {
+  window.clearInterval(window._supportUnreadTimer);
+  $('#provider-support-widget')?.remove();
+  if (!U || U.role !== 'provider') return;
+  document.body.insertAdjacentHTML('beforeend', `<div id="provider-support-widget" class="provider-support-widget"><aside id="provider-support-panel" class="support-panel" aria-label="Atendimento de suporte" hidden><header class="support-panel-header"><div><span>AJUDA CONECTAFEMME</span><strong>Central de suporte</strong></div><button type="button" data-support-close aria-label="Fechar suporte">×</button></header><div class="support-panel-content"><p class="support-empty">Carregando seus chamados…</p></div></aside><button class="support-fab" type="button" aria-expanded="false" aria-controls="provider-support-panel"><span aria-hidden="true">✉</span> Suporte <i class="support-fab-badge" hidden></i></button></div>`);
+  const root = $('#provider-support-widget'), panel = $('#provider-support-panel'), fab = root.querySelector('.support-fab');
+  const updateBadge = async () => {
+    try {
+      const data = await api('support_unread', null, '', true);
+      const badge = root.querySelector('.support-fab-badge');
+      badge.hidden = !data.count;
+      badge.textContent = data.count > 99 ? '99+' : String(data.count || '');
+    } catch { /* A indisponibilidade do contador não impede abrir o suporte. */ }
+  };
+  fab.onclick = async () => {
+    panel.hidden = !panel.hidden;
+    fab.setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) { panel.dataset.ticket = ''; await renderSupportPanel().catch(() => { panel.querySelector('.support-panel-content').innerHTML = '<p class="support-empty">Não foi possível carregar seus chamados. Tente novamente.</p>'; }); }
+  };
+  root.addEventListener('click', async (event) => {
+    const target = event.target.closest('button');
+    if (!target) return;
+    if (target.matches('[data-support-close]')) { panel.hidden = true; fab.setAttribute('aria-expanded', 'false'); return; }
+    if (target.matches('[data-support-new]')) {
+      panel.dataset.ticket = '';
+      panel.querySelector('.support-panel-content').innerHTML = `<form class="support-new-form" data-support-new-form><button class="btn out sm" type="button" data-support-back>← Chamados</button><h3>Abrir chamado</h3><label for="support-subject">Assunto</label><input id="support-subject" maxlength="150" required placeholder="Ex.: problema com minha agenda"><label for="support-first-message">Como podemos ajudar?</label><textarea id="support-first-message" maxlength="5000" rows="5" required placeholder="Descreva o que aconteceu…"></textarea><button class="btn" type="submit">Enviar para o suporte</button></form>`;
+    } else if (target.matches('[data-support-back]')) { panel.dataset.ticket = ''; await renderSupportPanel(); }
+    else if (target.matches('[data-support-ticket]')) { panel.dataset.ticket = target.dataset.supportTicket; await renderSupportPanel(); updateBadge(); }
+  });
+  root.addEventListener('submit', async (event) => {
+    if (event.target.matches('[data-support-new-form]')) {
+      event.preventDefault();
+      const form = event.target;
+      if (form.dataset.sending) return;
+      const subject = $('#support-subject').value.trim(), body = $('#support-first-message').value.trim();
+      if (!subject || !body) return;
+      form.dataset.sending = 'true';
+      const submit = form.querySelector('[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        const result = await api('support_create', { subject, body });
+        await notifySupportMessage(result.ticket.id, result.message.id);
+        panel.dataset.ticket = String(result.ticket.id);
+        await renderSupportPanel(); updateBadge();
+      } catch (error) {
+        console.warn('Não foi possível abrir o chamado:', error);
+      } finally {
+        if (form.isConnected) { delete form.dataset.sending; if (submit) submit.disabled = false; }
+      }
+    } else if (event.target.matches('[data-support-reply-form]')) {
+      event.preventDefault();
+      const form = event.target;
+      if (form.dataset.sending) return;
+      const body = $('#support-reply').value.trim(), ticketId = Number(panel.dataset.ticket);
+      if (!body || !ticketId) return;
+      form.dataset.sending = 'true';
+      const submit = form.querySelector('[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        const result = await api('support_reply', { ticket_id: ticketId, body });
+        await notifySupportMessage(ticketId, result.message.id);
+        await renderSupportPanel(); updateBadge();
+      } catch (error) {
+        console.warn('Não foi possível responder ao chamado:', error);
+      } finally {
+        if (form.isConnected) { delete form.dataset.sending; if (submit) submit.disabled = false; }
+      }
+    }
+  });
+  await updateBadge();
+  window._supportUnreadTimer = window.setInterval(updateBadge, 60000);
+}
+
 function logout(silent = false) {
   localStorage.removeItem('u');
   localStorage.removeItem('t');
@@ -220,18 +322,19 @@ function toggleTheme() {
 
 function nav() {
   $('#nav').innerHTML = `<a href="#/">Início</a>` + (U
-    ? `<a href="#/${U.role === 'admin' ? 'admin' : 'painel'}">${U.role === 'admin' ? 'Admin' : U.role === 'provider' ? 'Meu painel' : 'Meus agendamentos'}</a>${['client', 'provider'].includes(U.role) ? '<button class="btn sm push-toggle" id="push-toggle" type="button">Ativar notificações</button>' : ''}<button onclick="logout()">Sair</button>`
+    ? `<a href="#/${U.role === 'admin' ? 'admin' : 'painel'}">${U.role === 'admin' ? 'Admin' : U.role === 'provider' ? 'Meu painel' : 'Meus agendamentos'}</a>${['client', 'provider', 'admin'].includes(U.role) ? '<button class="btn sm push-toggle" id="push-toggle" type="button">Ativar notificações</button>' : ''}<button onclick="logout()">Sair</button>`
     : `<a href="#/login">Entrar</a><a class="btn sm signup-link" href="#/cadastro">Cadastrar</a>`) +
     `<button class="btn sm install-app" id="install-app" type="button">Instalar app</button><button class="theme-toggle" id="theme-toggle" type="button" aria-label="Alternar tema" title="Alternar tema"><span aria-hidden="true">${document.documentElement.dataset.theme === 'dark' ? '☀' : '☾'}</span></button>`;
   $('#theme-toggle').onclick = toggleTheme;
   $('#install-app').onclick = installPWA;
-  if (U && ['client', 'provider'].includes(U.role)) {
+  if (U && ['client', 'provider', 'admin'].includes(U.role)) {
     $('#push-toggle').onclick = () => togglePushNotifications().catch((error) => {
       console.error('Falha ao configurar notificações:', error);
       alert(error?.error || 'Não foi possível configurar as notificações. Tente novamente.');
     });
     refreshPushButton();
   }
+  mountSupportWidget();
 }
 
 function route() {
@@ -1192,7 +1295,20 @@ function formatAdminNumber(value) { return new Intl.NumberFormat('pt-BR').format
 
 async function admin(tab = 'd') {
   if (!U || U.role !== 'admin') return location.hash = '#/login';
-  const [users, categories, bookings] = await Promise.all([api('admin_users'), api('cats'), api('admin_bookings')]);
+  let [users, categories, bookings, supportUnread] = await Promise.all([api('admin_users'), api('cats'), api('admin_bookings'), api('support_unread')]);
+  let supportTickets = [], activeSupportThread = null;
+  if (tab === 'h') {
+    supportTickets = await api('support_list');
+    const requested = Number(window._adminSupportTicket || 0);
+    const selected = supportTickets.find((ticket) => Number(ticket.id) === requested) || supportTickets[0];
+    if (selected) {
+      activeSupportThread = await api('support_messages', null, `&id=${Number(selected.id)}`);
+      activeSupportThread.ticket.professional_name = selected.professional_name;
+      selected.unread_count = 0;
+      window._adminSupportTicket = Number(selected.id);
+      supportUnread = await api('support_unread');
+    } else window._adminSupportTicket = 0;
+  }
   const professionals = users.filter((user) => user.role === 'provider');
   const clients = users.filter((user) => user.role === 'client');
   const userTable = (people, title, empty) => `<div class="box admin-user-group"><div class="admin-group-heading"><h3>${title}</h3><span class="admin-count">${people.length} cadastro${people.length === 1 ? '' : 's'}</span></div>${people.length ? `<table><tr><th>Nome</th><th>Especialidade</th><th>Localização</th><th>E-mail</th><th>WhatsApp</th><th></th></tr>${people.map((user) => `<tr><td>${esc(user.name)} ${user.is_demo ? '<span class="tag demo-tag">DEMO</span>' : ''}</td><td>${user.role === 'provider' ? esc(specialtyList(user).join(' · ') || 'Sem categoria') : '—'}</td><td>${esc([user.city, user.state].filter(Boolean).join(' · ') || '—')}</td><td>${esc(user.email)}</td><td>${esc(user.whatsapp)}</td><td><button class="btn red sm" onclick="adel(${user.id})">Excluir</button></td></tr>`).join('')}</table>` : `<p class="muted">${empty}</p>`}</div>`;
@@ -1205,11 +1321,35 @@ async function admin(tab = 'd') {
     c: userTable(clients, 'Clientes', 'Nenhum cliente cadastrado.'),
     k: `<div class="box"><div class="bar"><input id="nc" placeholder="Nova categoria"><button class="btn" id="ac">Adicionar</button></div><br>${categories.map((category) => `<span class="tag">${esc(category)} <a href="#" onclick="acd('${esc(category)}');return false">✕</a></span> `).join('')}</div>`,
     b: `<p class="muted admin-bookings-intro">Consulte separadamente os agendamentos feitos por clientes com conta no site e os atendimentos anotados manualmente pelos profissionais.</p>${adminBookingTable(onlineBookings, 'Clientes que agendaram pelo site', 'Nenhuma reserva feita por clientes pelo site.')}${adminBookingTable(professionalBookings, 'Agendamentos adicionados pelos profissionais', 'Nenhum atendimento adicionado manualmente por profissionais.')}`,
+    h: `<section class="support-admin-layout"><div class="box support-admin-queue"><div class="admin-group-heading"><div><h3>Chamados recebidos</h3><p class="muted">Mensagens enviadas pelas profissionais.</p></div><span class="admin-count">${supportTickets.length} ${supportTickets.length === 1 ? 'chamado' : 'chamados'}</span></div>${supportTicketListMarkup(supportTickets, true)}</div><div class="box support-admin-conversation">${activeSupportThread ? supportThreadMarkup(activeSupportThread, true) : '<p class="support-empty">Ainda não há chamados de suporte.</p>'}</div></section>`,
     s: `<div class="box security-box"><h3>Alterar senha administrativa</h3><p class="muted">Use esta área para trocar a senha do acesso administrativo. A senha atual é necessária e a nova senha deve ter pelo menos 8 caracteres.</p><label>Senha atual</label><input id="admin-current-password" type="password" autocomplete="current-password"><label>Nova senha</label><input id="admin-new-password" type="password" minlength="8" autocomplete="new-password"><label>Confirmar nova senha</label><input id="admin-confirm-password" type="password" minlength="8" autocomplete="new-password"><br><br><button class="btn" id="change-admin-password" type="button">Salvar nova senha</button></div>`,
   };
-  app.innerHTML = `<section class="admin-heading"><div class="admin-heading-copy"><span class="eyebrow">PAINEL DE CONTROLE</span><h2>Administração</h2><p class="muted">Acompanhe a comunidade e a operação do ConectaFemme.</p></div></section><div class="tabs admin-tabs">${[['d','Dashboard'],['p','Profissionais'],['c','Clientes'],['k','Categorias'],['b','Agendamentos'],['s','Segurança']].map(([key,label]) => `<button class="${key === tab ? 'on' : ''}" onclick="admin('${key}')">${label}</button>`).join('')}</div>${content[tab] || content.d}`;
+  app.innerHTML = `<section class="admin-heading"><div class="admin-heading-copy"><span class="eyebrow">PAINEL DE CONTROLE</span><h2>Administração</h2><p class="muted">Acompanhe a comunidade e a operação do ConectaFemme.</p></div></section><div class="tabs admin-tabs">${[['d','Dashboard'],['p','Profissionais'],['c','Clientes'],['k','Categorias'],['b','Agendamentos'],['h',`Suporte${supportUnread.count ? ` · ${supportUnread.count}` : ''}`],['s','Segurança']].map(([key,label]) => `<button class="${key === tab ? 'on' : ''}" onclick="admin('${key}')">${label}</button>`).join('')}</div>${content[tab] || content.d}`;
   window._at = tab;
   if (tab === 'd') bindAdminDashboard(users);
+  if (tab === 'h') {
+    document.querySelectorAll('[data-admin-support-ticket]').forEach((button) => button.addEventListener('click', () => { window._adminSupportTicket = Number(button.dataset.adminSupportTicket); admin('h'); }));
+    document.querySelector('[data-admin-support-back]')?.addEventListener('click', () => { window._adminSupportTicket = 0; admin('h'); });
+    $('[data-support-reply-form]')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.target;
+      if (form.dataset.sending) return;
+      const body = $('#support-reply').value.trim(), ticketId = Number(window._adminSupportTicket);
+      if (!body || !ticketId) return;
+      form.dataset.sending = 'true';
+      const submit = form.querySelector('[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        const result = await api('support_reply', { ticket_id: ticketId, body });
+        await notifySupportMessage(ticketId, result.message.id);
+        admin('h');
+      } catch (error) {
+        console.warn('Não foi possível responder ao chamado:', error);
+      } finally {
+        if (form.isConnected) { delete form.dataset.sending; if (submit) submit.disabled = false; }
+      }
+    });
+  }
   if ($('#ac')) $('#ac').onclick = async () => { await api('admin_cat_add', { name: $('#nc').value }); admin('k'); };
   if ($('#change-admin-password')) $('#change-admin-password').onclick = async () => {
     const current_password = $('#admin-current-password').value;
