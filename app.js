@@ -353,6 +353,13 @@ function route() {
   scrollTo(0, 0);
 }
 addEventListener('hashchange', route);
+addEventListener('storage', (event) => {
+  if (event.key !== null && event.key !== 'u' && event.key !== 't') return;
+  try { U = JSON.parse(localStorage.u || 'null'); }
+  catch { U = null; }
+  T = localStorage.t || '';
+  route();
+});
 
 async function home() {
   let categories;
@@ -995,7 +1002,13 @@ function providerDashboardMarkup(bookings, slots, services) {
   const weekEnd = new Date(weekStartDate.getTime() + 6 * 86400000).toISOString().slice(0, 10);
   const activeBookings = bookings.filter((booking) => booking.status !== 'cancelado' && booking.day);
   const weekCount = activeBookings.filter((booking) => booking.day >= weekStart && booking.day <= weekEnd).length;
-  const freeToday = slots.filter((slot) => slot.day === today && slot.available && !slot.booked).sort((a, b) => a.hour.localeCompare(b.hour));
+  const [currentHour, currentMinute] = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()).split(':').map(Number);
+  const currentMinutes = currentHour * 60 + currentMinute;
+  const minutesOf = (value) => {
+    const [hour, minute] = String(value || '').split(':').map(Number);
+    return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : -1;
+  };
+  const freeToday = slots.filter((slot) => slot.day === today && slot.available && !slot.booked && minutesOf(slot.hour) > currentMinutes).sort((a, b) => a.hour.localeCompare(b.hour));
   const monthlyBookings = activeBookings.filter((booking) => booking.day.slice(0, 7) === today.slice(0, 7));
   const monthDays = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + 1, 0)).getUTCDate();
   const elapsedDays = todayDate.getUTCDate();
@@ -1006,13 +1019,10 @@ function providerDashboardMarkup(bookings, slots, services) {
     if (title) serviceCounts.set(title, (serviceCounts.get(title) || 0) + 1);
   });
   const mostPopular = [...serviceCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))[0];
-  const [currentHour, currentMinute] = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()).split(':').map(Number);
-  const currentMinutes = currentHour * 60 + currentMinute;
   const nextBooking = activeBookings.filter((booking) => {
     if (booking.day > today) return true;
     if (booking.day < today) return false;
-    const [hour, minute] = String(booking.hour || '').split(':').map(Number);
-    return Number.isFinite(hour) && Number.isFinite(minute) && hour * 60 + minute >= currentMinutes;
+    return minutesOf(booking.hour) >= currentMinutes;
   }).sort((a, b) => `${a.day} ${a.hour}`.localeCompare(`${b.day} ${b.hour}`))[0];
   const availableText = freeToday.length ? freeToday.map((slot) => esc(slot.hour)).join(' · ') : 'Nenhum horário livre restante hoje';
   return `<section class="provider-dashboard" aria-label="Resumo da sua agenda">
