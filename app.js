@@ -350,6 +350,7 @@ function route() {
   const hashRoute = location.hash.slice(2).split('?')[0];
   const parts = hashRoute.split('/');
   ({ '': home, p: () => provider(parts[1]), login, cadastro, painel, admin }[parts[0]] || home)();
+  window.setTimeout(showWelcomeMessageIfPending, 0);
   scrollTo(0, 0);
 }
 addEventListener('hashchange', route);
@@ -533,8 +534,10 @@ function authForm(register) {
   }
   $('#ok').onclick = async () => {
     const body = { email: $('#email').value, password: $('#pw').value };
+    let createdRole = '';
     if (register) {
       const role = $('#role').value;
+      createdRole = role;
       if (!$('#accept-terms').checked) return alert('Leia e aceite os Termos de Uso para criar sua conta.');
       if (role === 'provider' && !$('#accept-provider-rules').checked) return alert('Leia e aceite as Regras para Profissionais para continuar.');
       Object.assign(body, {
@@ -559,12 +562,14 @@ function authForm(register) {
     }
     const result = await api(register ? 'register' : 'login', body);
     if (register && result.verification_required) {
+      sessionStorage.setItem('ce-welcome-role', createdRole);
       alert(result.email_sent
         ? 'Cadastro salvo. Enviamos um link de confirmação para seu e-mail; confirme antes de entrar.'
         : 'Cadastro salvo, mas não foi possível enviar o e-mail agora. Use “Reenviar confirmação de e-mail” na tela de entrada.');
       location.hash = '#/login';
       return;
     }
+    if (register) sessionStorage.setItem('ce-welcome-role', result.user?.role || createdRole);
     T = result.token; U = result.user;
     localStorage.t = T; localStorage.u = JSON.stringify(U);
     const pendingReschedule = !register && U.role === 'client' ? sessionStorage.getItem('pending-reschedule') : '';
@@ -598,6 +603,36 @@ function authForm(register) {
 }
 const login = () => authForm(false);
 const cadastro = () => authForm(true);
+
+function showWelcomeMessageIfPending() {
+  const role = sessionStorage.getItem('ce-welcome-role');
+  if (!['client', 'provider'].includes(role)) return;
+  sessionStorage.removeItem('ce-welcome-role');
+  const copy = role === 'provider'
+    ? {
+        title: 'Seja bem-vinda ao Conecta Femme! ✨',
+        paragraphs: [
+          'É um prazer ter você com a gente! Obrigada por escolher nossa plataforma para dar mais visibilidade ao seu trabalho e conectar-se a novas clientes.',
+          'Conte com a gente nessa jornada! Se precisar de ajuda ou tiver alguma dúvida, nosso suporte estará à disposição.'
+        ],
+        closing: 'Estamos felizes em ter você aqui! 💗'
+      }
+    : {
+        title: 'Seja bem-vinda ao Conecta Femme! 💗',
+        paragraphs: [
+          'Que bom ter você por aqui! Obrigada por escolher nossa plataforma para encontrar profissionais e tornar seus agendamentos mais práticos.',
+          'Se precisar de ajuda ou tiver qualquer dúvida, é só entrar em contato com nosso suporte. Estamos aqui para você!'
+        ],
+        closing: 'Aproveite e sinta-se em casa! ✨'
+      };
+  document.querySelector('#welcome-dialog')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `<dialog id="welcome-dialog" class="welcome-dialog" aria-labelledby="welcome-title" aria-describedby="welcome-copy"><div class="welcome-sparkle welcome-sparkle-one" aria-hidden="true">✦</div><div class="welcome-sparkle welcome-sparkle-two" aria-hidden="true">✧</div><div class="welcome-heart" aria-hidden="true">♡</div><span class="welcome-kicker">UM CARINHO PARA SUA CHEGADA</span><h2 id="welcome-title">${copy.title}</h2><div id="welcome-copy">${copy.paragraphs.map((paragraph) => `<p>${paragraph}</p>`).join('')}<p class="welcome-closing"><strong>${copy.closing}</strong></p></div><button class="welcome-dismiss" type="button">Entendi 💗</button><div class="welcome-time" aria-hidden="true"><i></i></div></dialog>`);
+  const dialog = $('#welcome-dialog');
+  dialog.querySelector('.welcome-dismiss').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.showModal();
+  window.setTimeout(() => { if (dialog.open) dialog.close(); }, 9000);
+}
 
 const statusLabel = (status) => ({ pendente: 'Pendente', confirmado: 'Confirmado', concluido: 'OK', cancelado: 'Cancelado' }[status] || status);
 function bookTable(bookings) {
