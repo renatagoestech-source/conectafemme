@@ -422,10 +422,10 @@ async function provider(id) {
   let selectedSlot = null;
   const availableSlots = professional.slots.filter((slot) => !slot.booked && slot.available !== false);
   const days = [...new Set(availableSlots.map((slot) => slot.day))];
-  const calendarMarkup = `<section class="box booking-calendar" id="booking-calendar" hidden><div class="booking-calendar-header"><span class="booking-kicker">AGENDA</span><h3>Agendar atendimento</h3><p class="booking-intro">Escolha um dia para consultar os horários livres.</p></div>
-    <div class="booking-date-control"><label for="day">Dia disponível</label><select id="day" ${days.length ? '' : 'disabled'}><option value="">${days.length ? 'Selecione um dia' : 'Nenhum horário disponível'}</option>${days.map((day) => `<option value="${esc(day)}">${fd(day)}</option>`).join('')}</select></div>
+  const calendarMarkup = `<dialog class="booking-dialog" id="booking-dialog" aria-labelledby="booking-dialog-title"><section class="box booking-calendar"><div class="booking-dialog-heading"><div class="booking-calendar-header"><span class="booking-kicker">AGENDAMENTO</span><h3 id="booking-dialog-title">Escolha dia e horário</h3><p class="booking-intro">Confira o serviço e selecione uma disponibilidade.</p></div><button class="booking-dialog-close" id="booking-dialog-close" type="button" aria-label="Fechar janela de agendamento">×</button></div>
+    <p id="sel" class="booking-selection-summary">Escolha um serviço para continuar.</p><div class="booking-date-control"><label for="day">Dia disponível</label><select id="day" ${days.length ? '' : 'disabled'}><option value="">${days.length ? 'Selecione um dia' : 'Nenhum horário disponível'}</option>${days.map((day) => `<option value="${esc(day)}">${fd(day)}</option>`).join('')}</select></div>
     <div class="booking-time-panel"><h4 class="booking-time-heading">Horários disponíveis</h4><div class="booking-time-grid" id="hrs" aria-live="polite"><p class="booking-calendar-empty">${days.length ? 'Selecione um dia para ver os horários disponíveis.' : 'Nenhum horário disponível no momento.'}</p></div></div>
-    <p id="sel" class="booking-selection-summary">Escolha um serviço acima.</p><button class="btn booking-confirm" id="bk" type="button" disabled>Confirmar agendamento</button></section>`;
+    <button class="btn booking-confirm" id="bk" type="button" disabled>Confirmar agendamento</button></section></dialog>`;
   const instagram = professional.instagram_url
     ? `<a class="btn out sm" href="${esc(professional.instagram_url)}" target="_blank" rel="noopener noreferrer">Instagram</a>`
     : '';
@@ -439,6 +439,11 @@ async function provider(id) {
     }).join('') || '<p class="muted">Sem serviços ainda.</p>'}</div>
     ${providerReviewsMarkup(professional)}
     ${calendarMarkup}`;
+  const bookingDialog = $('#booking-dialog');
+  $('#booking-dialog-close').onclick = () => bookingDialog.close();
+  bookingDialog.onclick = (event) => {
+    if (event.target === bookingDialog) bookingDialog.close();
+  };
   const syncBookingButton = () => {
     const button = $('#bk');
     if (button) button.disabled = !selectedService || !selectedSlot;
@@ -468,11 +473,16 @@ async function provider(id) {
   };
   document.querySelectorAll('[data-s]').forEach((button) => button.onclick = () => {
       selectedService = button.dataset.s;
+      selectedSlot = null;
       document.querySelectorAll('[data-s]').forEach((item) => item.classList.remove('service-selected'));
       button.classList.add('service-selected');
-      $('#booking-calendar').hidden = false;
-      $('#sel').textContent = `Serviço selecionado: ${button.parentNode.querySelector('h4').textContent}`;
+      $('#day').value = '';
+      $('#hrs').innerHTML = `<p class="booking-calendar-empty">${days.length ? 'Selecione um dia para ver os horários disponíveis.' : 'Nenhum horário disponível no momento.'}</p>`;
+      const service = professional.services.find((item) => String(item.id) === String(selectedService));
+      $('#sel').textContent = `Serviço selecionado: ${button.parentNode.querySelector('h4').textContent} · ${brl(service?.price)}`;
       syncBookingButton();
+      if (!bookingDialog.open) bookingDialog.showModal();
+      $('#day').focus();
     });
   $('#bk').onclick = async () => {
       if (!U || U.role !== 'client') { alert('Entre como cliente para agendar.'); location.hash = '#/login'; return; }
@@ -490,6 +500,7 @@ async function provider(id) {
       const providerDelivery = deliveryLabel(notification?.providerPush, notification?.providerEmail);
       const clientDelivery = deliveryLabel(notification?.clientPush, notification?.clientEmail);
       const needsActivation = providerDelivery === 'não confirmada' || clientDelivery === 'não confirmada';
+      if (bookingDialog.open) bookingDialog.close();
       alert(`Agendamento confirmado automaticamente. Aviso para a profissional: ${providerDelivery}. Aviso para você: ${clientDelivery}.${needsActivation ? ' Para receber avisos push, cliente e profissional precisam ativar “Ativar notificações” no site; se o e-mail alternativo não estiver configurado, combinem os detalhes pelo WhatsApp.' : ' Combine os detalhes pelo WhatsApp.'}`);
       location.hash = '#/painel';
   };
