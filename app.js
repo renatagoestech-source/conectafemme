@@ -422,7 +422,7 @@ async function provider(id) {
   let selectedSlot = null;
   const availableSlots = professional.slots.filter((slot) => !slot.booked && slot.available !== false);
   const days = [...new Set(availableSlots.map((slot) => slot.day))];
-  const calendarMarkup = `<section class="box booking-calendar"><div class="booking-calendar-header"><span class="booking-kicker">AGENDA</span><h3>Agendar atendimento</h3><p class="booking-intro">Escolha um dia para consultar os horários livres.</p></div>
+  const calendarMarkup = `<section class="box booking-calendar" id="booking-calendar" hidden><div class="booking-calendar-header"><span class="booking-kicker">AGENDA</span><h3>Agendar atendimento</h3><p class="booking-intro">Escolha um dia para consultar os horários livres.</p></div>
     <div class="booking-date-control"><label for="day">Dia disponível</label><select id="day" ${days.length ? '' : 'disabled'}><option value="">${days.length ? 'Selecione um dia' : 'Nenhum horário disponível'}</option>${days.map((day) => `<option value="${esc(day)}">${fd(day)}</option>`).join('')}</select></div>
     <div class="booking-time-panel"><h4 class="booking-time-heading">Horários disponíveis</h4><div class="booking-time-grid" id="hrs" aria-live="polite"><p class="booking-calendar-empty">${days.length ? 'Selecione um dia para ver os horários disponíveis.' : 'Nenhum horário disponível no momento.'}</p></div></div>
     <p id="sel" class="booking-selection-summary">Escolha um serviço acima.</p><button class="btn booking-confirm" id="bk" type="button" disabled>Confirmar agendamento</button></section>`;
@@ -470,6 +470,7 @@ async function provider(id) {
       selectedService = button.dataset.s;
       document.querySelectorAll('[data-s]').forEach((item) => item.classList.remove('service-selected'));
       button.classList.add('service-selected');
+      $('#booking-calendar').hidden = false;
       $('#sel').textContent = `Serviço selecionado: ${button.parentNode.querySelector('h4').textContent}`;
       syncBookingButton();
     });
